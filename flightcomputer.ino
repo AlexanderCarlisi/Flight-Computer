@@ -3,36 +3,32 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_BME280.h>
 
-#define SERVO_X_SIGNAL 10
-#define SERVO_Y_SIGNAL 2
+#define SERVO_X_PIN 10
+#define SERVO_Y_PIN 2
 
-typedef enum Mode {
-  PreInit,        // Default Mode when Code Startsup, Means never got past Startup Function
-  OnPad,          // Startup
-  PoweredFlight,  // Servoing, Printing
-  Coast           // Printing, Deploy shoot, blah blah blah
-} Mode;
 
-Mode flightMode;
 
+// Sensors
 Adafruit_MPU6050 mpu;
 Adafruit_BME280 bme;
 Servo ServoX;
 Servo ServoY;
 
-float pitch = 0.0, roll = 0.0, yaw = 0.0;
-
-float setpointPitch = -90, setpointRoll = 0; // Patty you should update the setpoint to fix the tilting.
-float Kp = 2., Ki = 0.05, Kd = 0.1;
-float integralPitch = 0, integralRoll = 0;
-float prevErrorPitch = 0, prevErrorRoll = 0;
-
-// Persistent values for PID
-//float integral = 0;
-//float previousError = 0;
-
+// Calc dt in loop
 unsigned long lastTime = 0;
 
+
+///
+/// PID Funcs and Vars
+///
+
+// PID Constants
+const float setpointPitch = -90, setpointRoll = 0;
+const float Kp = 2., Ki = 0.05, Kd = 0.1;
+
+// PID Variables
+float integralPitch = 0, integralRoll = 0;
+float prevErrorPitch = 0, prevErrorRoll = 0;
 
 float PID(float setangle, float input, float dt, float &integral, float &previousError){
   float error = setangle - input;
@@ -43,7 +39,34 @@ float PID(float setangle, float input, float dt, float &integral, float &previou
   return output;
 }
 
-void checkSerialForModeChange() {
+
+///
+/// Flight State Machine
+///
+
+#define MODE_CHANGE         1     // 0 = Velocity based, 1 = Serial based
+#define FREEFALL_THRESHOLD  2.0   // m/s/s, checks accelerometer  TODO: tune
+#define DESCENT_THRESHOLD   5     // Consecutive drops in Altitude until we trust Barometer TODO:Tune
+#define _G                  9.81  // Earth, m/s/s
+
+typedef enum Mode {
+  PreInit,        // Initializing Arduino code
+  OnPad,          // OnPad, awaiting Launch
+  PoweredFlight,  // Launched: Servoing
+  Coast           // Deployed Parachute, coasting down.
+} Mode;
+Mode flightMode;
+
+void deploy_parachute() {
+  // TODO:
+}
+
+void abort() {
+  // TODO:
+  deploy_parachute()
+}
+
+void mode_change_serial() {
   if (Serial.available() > 0) {
     String input = Serial.readStringUntil('\n'); // Read full line until Enter
     input.trim(); // Remove spaces/newlines
@@ -66,8 +89,20 @@ void checkSerialForModeChange() {
       }
     }
   }
-
 }
+
+bool parachute_deployed = false;
+float previousAltitude;
+int descent_count;
+
+void mode_change_velocity(float altitude, float dt, float az) {
+  if (!parachute_deployed) {
+    if (altitude - previousAltitude <= 0) descent_count++;
+    else descent_count = 0;
+    bool descending = descent_count >= DESCENT_THRESHOLD;
+  }
+}
+
 
 void setup() {
 
@@ -131,8 +166,8 @@ void setup() {
   } while (out != BME280_BEGIN_ALL_GOOD);
 
   // Servo Signal Pins
-  ServoX.attach(SERVO_X_SIGNAL);
-  ServoY.attach(SERVO_Y_SIGNAL);
+  ServoX.attach(SERVO_X_PIN);
+  ServoY.attach(SERVO_Y_PIN);
 
   mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
@@ -141,40 +176,17 @@ void setup() {
   Serial.println("Sensors initialized.");
 
   flightMode = OnPad;
-
-  delay(100);
   lastTime = millis();
 }
 
 
-void serialData(float altitude, float temperature, float pressure, float servoAngleX, float servoAngleY, float gx, float gy, float gz) {
-  // Each char is one Byte. This could be causing the slowdown.
-  // Output
-  Serial.print(", Pitch: "); Serial.print(pitch);
-  Serial.print("°, Roll: "); Serial.print(roll);
-  Serial.print("°, Yaw: "); Serial.print(yaw);
-  //Serial.print("°, Altitude: "); Serial.print(altitude);
-  //Serial.print(" m, Temp: "); Serial.print(temperature);
-  //Serial.print(" °C, Pressure: "); Serial.print(pressure);
-  //Serial.print(" hPa");
-  //Serial.print("°, Servo AngleX: "); Serial.print(servoAngleX);
-  //Serial.print("°, Servo AngleY: "); Serial.print(servoAngleY);
-  
-  Serial.print("°, Gyro AngleX:  "); Serial.print(gx);
-  Serial.print("°, Gyro AngleY:  "); Serial.print(gy);
-  Serial.print("°, Gyro Anglez:  "); Serial.print(gz);
-  
-  Serial.println();
-}
-
-
 void loop() {
-  Serial.print("worcking");
+  // Update Sensor Values
   sensors_event_t accel, gyro, temp;
-  mpu.getEvent(&accel, &gyro, &temp);   // This could be causing Slowdown, can't see the code so idk.
+  mpu.getEvent(&accel, &gyro, &temp);
   
-  // All this is just math, it wont cause the slowdown.
-  // Calculate pitch angle from accelerometer
+  float dt = (millis() - lastTime) / 1000.0;
+
   float ax = accel.acceleration.x;
   float ay = accel.acceleration.y;
   float az = accel.acceleration.z;
@@ -183,20 +195,21 @@ void loop() {
   float gy = gyro.gyro.y * 180.0 / PI;
   float gz = gyro.gyro.z * 180.0 / PI;
 
-  float dt = (millis() - lastTime) / 1000.0;
-
-  float accPitch = atan2(-ax, az) * 180.0 / PI;
-  float accRoll  = atan2(ay, az) * 180.0 / PI;
-
-  float alpha = 0.98;
-  pitch = alpha * (pitch + gy * dt) + (1 - alpha) * accPitch;
-  roll  = alpha * (roll + gx * dt) + (1 - alpha) * accRoll;
-  yaw += gz * dt;// relative yaw
-
   float temperature = bme.readTemperature();
   float pressure = bme.readPressure() / 100.0F; // hPa
   float altitude = bme.readAltitude(1013.25);   // Sea-level pressure (hPa)
 
+  float accPitch = atan2(-ax, az) * 180.0 / PI;
+  float accRoll  = atan2(ay, az) * 180.0 / PI;
+  
+  // Complementary filter contant between the Gyro and Accelerometer
+  float alpha = 0.98; // TODO: may need tuning
+
+  float pitch = alpha * (pitch + gy * dt) + (1 - alpha) * accPitch;
+  float roll = alpha * (roll + gx * dt) + (1 - alpha) * accRoll;
+  float yaw += gz * dt;
+  
+  // Servo output
   float outputX = PID(setpointPitch, pitch, dt, integralPitch, prevErrorPitch);
   float outputY = PID(setpointRoll , roll, dt, integralRoll, prevErrorRoll);
 
@@ -207,8 +220,7 @@ void loop() {
   servoAngleY = constrain(servoAngleY, 0, 180);
   
   //mode switch logic
-  checkSerialForModeChange();
-  Serial.print("worcking");
+  MODE_CHANGE;
   switch(flightMode) {
     case OnPad: {
       Serial.print("Mode: OnPad");
@@ -217,7 +229,7 @@ void loop() {
     case PoweredFlight: {
       ServoX.write(servoAngleY);
       ServoY.write(servoAngleX);
-      Serial.print("Mode: PoweredFlight");
+      Srial.print("Mode: PoweredFlight");
       serialData(altitude, temperature, pressure, servoAngleX, servoAngleY, gx, gy, gz);
       break;
     }
@@ -233,5 +245,27 @@ void loop() {
   }
 
   lastTime = millis();
-  delay(10); // Look into maybe removing the 10ms delay to remove the slowdown.
 }
+
+
+void serialData(float altitude, float temperature, float pressure, float servoAngleX, float servoAngleY, float gx, float gy, float gz) {
+  // Each char is one Byte. This could be causing the slowdown.
+  // Output
+  Serial.print(", Pitch: "); Serial.print(pitch);
+  Serial.print("°, Roll: "); Serial.print(roll);
+  Serial.print("°, Yaw: "); Serial.print(yaw);
+
+  //Serial.print("°, Altitude: "); Serial.print(altitude);
+  //Serial.print(" m, Temp: "); Serial.print(temperature);
+  //Serial.print(" °C, Pressure: "); Serial.print(pressure);
+  //Serial.print(" hPa");
+  //Serial.print("°, Servo AngleX: "); Serial.print(servoAngleX);
+  //Serial.print("°, Servo AngleY: "); Serial.print(servoAngleY);
+  
+  Serial.print("°, Gyro AngleX:  "); Serial.print(gx);
+  Serial.print("°, Gyro AngleY:  "); Serial.print(gy);
+  Serial.print("°, Gyro Anglez:  "); Serial.print(gz);
+  
+  Serial.println();
+}
+
