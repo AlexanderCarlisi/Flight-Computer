@@ -46,8 +46,9 @@ float PID(float setangle, float input, float dt, float &integral, float &previou
 
 #define MODE_CHANGE         1     // 0 = Velocity based, 1 = Serial based
 #define FREEFALL_THRESHOLD  2.0   // m/s/s, checks accelerometer  TODO: tune
-#define DESCENT_THRESHOLD   5     // Consecutive drops in Altitude until we trust Barometer TODO:Tune
-#define _G                  9.81  // Earth, m/s/s
+#define DESCENT_THRESHOLD   0.5   // Altitude velocity threshold to be considered at Apogee.
+#define APOGEE_COUNT        5     // Consecutive ticks at DESCENT_THREASHOLD, till considered at Apogee
+#define _G                  9.81  // Earth, Gravity TS
 
 typedef enum Mode {
   PreInit,        // Initializing Arduino code
@@ -96,10 +97,25 @@ float previousAltitude;
 int descent_count;
 
 void mode_change_velocity(float altitude, float dt, float az) {
-  if (!parachute_deployed) {
-    if (altitude - previousAltitude <= 0) descent_count++;
+
+  // Check for Apogee for Parachute Deployment
+  if (!parachute_deployed && flightMode == PoweredFlight) {
+
+    // Check barometer
+    altitudeVelocity = (altitude - previousAltitude) / dt;
+    if (altitudeVelocity <= DESCENT_THRESHOLD) descent_count++;
     else descent_count = 0;
-    bool descending = descent_count >= DESCENT_THRESHOLD;
+    bool baroCheck = descent_count >= DESCENT_THRESHOLD;
+
+    // Check accelerometer
+    float totalAcc = sqrt(ax*ax + ay*ay + az*az); // Net forces
+    bool accelCheck = totalAcc <= FREEFALL_THRESHOLD;
+
+    if (baroCheck && accelCheck) {
+      deploy_parachute();
+      parachute_deployed = true;
+      flightMode = Coast;
+    }
   }
 }
 
