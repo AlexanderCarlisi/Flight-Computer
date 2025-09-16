@@ -5,8 +5,8 @@
 
 #define SERVO_X_PIN 10
 #define SERVO_Y_PIN 2
-
-
+#define EEPROM_ADDR 0x50
+#define BME_ADDR    0x76
 
 // Sensors
 Adafruit_MPU6050 mpu;
@@ -64,7 +64,7 @@ void deploy_parachute() {
 
 void abort() {
   // TODO:
-  deploy_parachute()
+  deploy_parachute();
 }
 
 void mode_change_serial() {
@@ -96,13 +96,12 @@ bool parachute_deployed = false;
 float previousAltitude;
 int descent_count;
 
-void mode_change_velocity(float altitude, float dt, float az) {
-
+void mode_change_velocity(float altitude, float dt, float ax, float ay, float az) {
   // Check for Apogee for Parachute Deployment
   if (!parachute_deployed && flightMode == PoweredFlight) {
 
     // Check barometer
-    altitudeVelocity = (altitude - previousAltitude) / dt;
+    float altitudeVelocity = (altitude - previousAltitude) / dt;
     if (altitudeVelocity <= DESCENT_THRESHOLD) descent_count++;
     else descent_count = 0;
     bool baroCheck = descent_count >= DESCENT_THRESHOLD;
@@ -118,6 +117,26 @@ void mode_change_velocity(float altitude, float dt, float az) {
     }
   }
 }
+
+
+
+///
+/// Logging Framework
+///
+
+typedef struct LoggedState {
+  float dt, ax, ay, az,
+        gx, gy, gz,
+        temperature, pressure, altitude,
+        accPitch, accRoll,
+        pitch, roll, yaw,
+        pidOutX, pidOutY,
+        servoAngleX, servoAngleY;
+  int descent_count;
+  bool parachute_deployed;
+  Mode mode;
+} LoggedState;
+
 
 
 void setup() {
@@ -155,7 +174,7 @@ void setup() {
 
   out = -1;
   do {
-    out = bme.begin(0x76);
+    out = bme.begin(BME_ADDR);
     switch(out) {
       case BME280_BEGIN_ALL_GOOD: {
         Serial.print("\n>>> Successfully Initialized BME280 <<<\n");
@@ -196,6 +215,9 @@ void setup() {
 }
 
 
+// Globals for Loop
+float yaw = 0;
+
 void loop() {
   // Update Sensor Values
   sensors_event_t accel, gyro, temp;
@@ -223,7 +245,7 @@ void loop() {
 
   float pitch = alpha * (pitch + gy * dt) + (1 - alpha) * accPitch;
   float roll = alpha * (roll + gx * dt) + (1 - alpha) * accRoll;
-  float yaw += gz * dt;
+  yaw += gz * dt;
   
   // Servo output
   float outputX = PID(setpointPitch, pitch, dt, integralPitch, prevErrorPitch);
@@ -235,8 +257,14 @@ void loop() {
   servoAngleX = constrain(servoAngleX, 0, 180);
   servoAngleY = constrain(servoAngleY, 0, 180);
   
-  //mode switch logic
-  MODE_CHANGE;
+  // mode switch logic
+  if (MODE_CHANGE == 0) {
+    mode_change_serial();
+  } else {
+    mode_change_velocity(altitude, dt, ax, ay, az);
+  }
+  
+  // Perform actions based on mode
   switch(flightMode) {
     case OnPad: {
       Serial.print("Mode: OnPad");
@@ -245,43 +273,28 @@ void loop() {
     case PoweredFlight: {
       ServoX.write(servoAngleY);
       ServoY.write(servoAngleX);
-      Srial.print("Mode: PoweredFlight");
-      serialData(altitude, temperature, pressure, servoAngleX, servoAngleY, gx, gy, gz);
       break;
     }
     case Coast: {
-      Serial.print("Mode: Coast");
-      serialData(altitude, temperature, pressure, servoAngleX, servoAngleY, gx, gy, gz);
       break;
     }
     default: {
-      Serial.print("Mode: "); Serial.print(flightMode);
       break;
     }
   }
 
   lastTime = millis();
+
+  // Logging
+  LoggedState ls = {
+    dt, ax, ay, az, gx, gy, gz, temperature, pressure, altitude,
+    accPitch, accRoll, pitch, roll, yaw, outputX, outputY, servoAngleX, 
+    servoAngleY, descent_count, parachute_deployed, flightMode
+  };
 }
 
 
-void serialData(float altitude, float temperature, float pressure, float servoAngleX, float servoAngleY, float gx, float gy, float gz) {
-  // Each char is one Byte. This could be causing the slowdown.
-  // Output
-  Serial.print(", Pitch: "); Serial.print(pitch);
-  Serial.print("°, Roll: "); Serial.print(roll);
-  Serial.print("°, Yaw: "); Serial.print(yaw);
-
-  //Serial.print("°, Altitude: "); Serial.print(altitude);
-  //Serial.print(" m, Temp: "); Serial.print(temperature);
-  //Serial.print(" °C, Pressure: "); Serial.print(pressure);
-  //Serial.print(" hPa");
-  //Serial.print("°, Servo AngleX: "); Serial.print(servoAngleX);
-  //Serial.print("°, Servo AngleY: "); Serial.print(servoAngleY);
+void serialData() {
   
-  Serial.print("°, Gyro AngleX:  "); Serial.print(gx);
-  Serial.print("°, Gyro AngleY:  "); Serial.print(gy);
-  Serial.print("°, Gyro Anglez:  "); Serial.print(gz);
-  
-  Serial.println();
 }
 
