@@ -124,6 +124,8 @@ void mode_change_velocity(float altitude, float dt, float ax, float ay, float az
 /// Logging Framework
 ///
 
+/// @struct LoggedState
+/// size on Uno: 80 bytes
 typedef struct LoggedState {
   float dt, ax, ay, az,
         gx, gy, gz,
@@ -136,6 +138,26 @@ typedef struct LoggedState {
   bool parachute_deployed;
   Mode mode;
 } LoggedState;
+
+// Current position in ROM
+unsigned int eeprom_write_addr = 0; // Start logging @0x00
+unsigned long previous_log_time = 0;
+unsigned long logging_period_ms = 1000; // Minimum 5ms for write time
+unsigned int eeprom_capacity_bytes = 2000;
+
+void eepromWrite(LoggedState &data) {
+  // Serialize data into bytes
+  byte* ptr = (byte*) &data;
+  for (unsigned int i = 0; i < sizeof(LoggedState); i++) {
+    Wire.beginTransmission(EEPROM_ADDR);
+    Wire.write((int)(eeprom_write_addr >> 8)); // high byte
+    Wire.write((int)(eeprom_write_addr & 0xFF));
+    Wire.write(ptr[i]);
+    Wire.endTransmission();
+    eeprom_write_addr++;
+    // dont need to delay here, logging period should encapsulate this
+  }
+}
 
 
 
@@ -223,7 +245,8 @@ void loop() {
   sensors_event_t accel, gyro, temp;
   mpu.getEvent(&accel, &gyro, &temp);
   
-  float dt = (millis() - lastTime) / 1000.0;
+  float currentTime = millis();
+  float dt = (currentTime - lastTime) / 1000.0;
 
   float ax = accel.acceleration.x;
   float ay = accel.acceleration.y;
@@ -283,18 +306,16 @@ void loop() {
     }
   }
 
-  lastTime = millis();
-
   // Logging
-  LoggedState ls = {
-    dt, ax, ay, az, gx, gy, gz, temperature, pressure, altitude,
-    accPitch, accRoll, pitch, roll, yaw, outputX, outputY, servoAngleX, 
-    servoAngleY, descent_count, parachute_deployed, flightMode
-  };
+  if (currentTime - previous_log_time >= logging_period_ms) {
+    LoggedState ls = {
+      dt, ax, ay, az, gx, gy, gz, temperature, pressure, altitude,
+      accPitch, accRoll, pitch, roll, yaw, outputX, outputY, servoAngleX, 
+      servoAngleY, descent_count, parachute_deployed, flightMode
+    };
+    eepromWrite(&ls);
+    previous_log_time = currentTime;
+  }
+
+  lastTime = millis();
 }
-
-
-void serialData() {
-  
-}
-
