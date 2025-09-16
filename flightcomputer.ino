@@ -145,7 +145,7 @@ unsigned long previous_log_time = 0;
 unsigned long logging_period_ms = 1000; // Minimum 5ms for write time
 unsigned int eeprom_capacity_bytes = 2000;
 
-void eepromWrite(LoggedState &data) {
+void eepromWrite(struct LoggedState* data) {
   // Serialize data into bytes
   byte* ptr = (byte*) &data;
   for (unsigned int i = 0; i < sizeof(LoggedState); i++) {
