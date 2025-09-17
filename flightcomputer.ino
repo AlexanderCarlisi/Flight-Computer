@@ -2,6 +2,7 @@
 #include <Servo.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_BME280.h>
+#include <SD.h>
 
 #define SERVO_X_PIN 10
 #define SERVO_Y_PIN 2
@@ -123,6 +124,9 @@ void mode_change_velocity(float altitude, float dt, float ax, float ay, float az
 ///
 /// Logging Framework
 ///
+#define SD_LOG_PATH     "/logs"
+#define SD_LOG_FILENAME "log"
+#define SD_LOG_EXT      ".pat"
 
 /// @struct LoggedState
 /// size on Uno: 80 bytes
@@ -143,7 +147,7 @@ typedef struct LoggedState {
 unsigned int eeprom_write_addr = 0; // Start logging @0x00
 unsigned long previous_log_time = 0;
 unsigned long logging_period_ms = 1000; // Minimum 5ms for write time
-unsigned int eeprom_capacity_bytes = 2000;
+size_t eeprom_capacity_bytes = 2000;
 
 void eepromWrite(struct LoggedState* data) {
   // Serialize data into bytes
@@ -157,6 +161,47 @@ void eepromWrite(struct LoggedState* data) {
     eeprom_write_addr++;
     // dont need to delay here, logging period should encapsulate this
   }
+}
+
+// TODO:
+// void eepromRead() -> buffer*, size_t length
+// return the whole eeprom buffer or not return but like set ptr to it
+
+void eepromToSSD() {
+  // Check for Logs folder
+  if (!SD.exists(SD_LOG_PATH))
+    SD.mkdir(SD_LOG_PATH);
+  
+  File logsDir = SD.open(SD_LOG_PATH);
+  if (!logsDir.isDirectory()) {
+    SD.remove(SD_LOG_PATH);
+    SD.mkdir(SD_LOG_PATH);
+    logsDir = SD.open(SD_LOG_PATH);
+  }
+
+  // Find log files, and accordingly name new one
+  int count = 0;
+  while(true) {
+    File entry = logsDir.openNextFile();
+    if (!entry) break;
+    else count++;
+  }
+
+  File logFile;
+  while(true) {
+    logFile = SD.open(
+      strcat(strcat(strcat(SD_LOG_PATH, SD_LOG_FILENAME), count), SD_LOG_EXT),
+      FILE_WRITE);
+    if (logFile) break;
+    // TODO: Better error logging here :O
+    else Serial.println("\n>>> Error creating Log File <<<\n");
+  }
+
+  // Write EEPROM to SD Card
+  // GET EEPROM buffer and length of buffer.
+  // logFile.write(/**buff, len*/);
+  logFile.close();
+  logsDir.close();
 }
 
 
