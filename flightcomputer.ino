@@ -15,8 +15,7 @@ Adafruit_BME280 bme;
 Servo ServoX;
 Servo ServoY;
 
-// Calc dt in loop
-unsigned long lastTime = 0;
+
 
 
 ///
@@ -49,6 +48,7 @@ float PID(float setangle, float input, float dt, float &integral, float &previou
 #define FREEFALL_THRESHOLD  2.0   // m/s/s, checks accelerometer  TODO: tune
 #define DESCENT_THRESHOLD   0.5   // Altitude velocity threshold to be considered at Apogee.
 #define APOGEE_COUNT        5     // Consecutive ticks at DESCENT_THREASHOLD, till considered at Apogee
+#define ABORT_DEGREES       45    // TODO: Tune, how many degrees off on Gyro until we Abort.
 #define _G                  9.81  // Earth, Gravity TS
 
 typedef enum Mode {
@@ -57,7 +57,26 @@ typedef enum Mode {
   PoweredFlight,  // Launched: Servoing
   Coast           // Deployed Parachute, coasting down.
 } Mode;
-Mode flightMode;
+
+/// @struct FlightState
+/// size on Uno: 81 bytes
+typedef struct FlightState {
+  float dt, ax, ay, az,
+        gx, gy, gz,
+        temperature, pressure, altitude,
+        accPitch, accRoll,
+        pitch, roll, yaw,
+        pidOutX, pidOutY,
+        servoAngleX, servoAngleY;
+  int descent_count;
+  bool parachute_deployed;
+  bool abort;
+  Mode mode;
+} FlightState;
+FlightState state;
+
+// Helper globals
+float previous_altitude;
 
 void deploy_parachute() {
   // TODO:
@@ -76,10 +95,10 @@ void mode_change_serial() {
     if (input.length() > 0 && input.charAt(0) >= '0' && input.charAt(0) <= '3') {
       int modeNumber = input.toInt();
       if (modeNumber >= 0 && modeNumber <= 3) {
-        if (modeNumber != flightMode) {  // Only update if mode is actually different
-          flightMode = (Mode)modeNumber;
+        if (modeNumber != state.mode) {  // Only update if mode is actually different
+          state.mode = (Mode)modeNumber;
           Serial.print("Flight mode set to: ");
-          switch (flightMode) {
+          switch (state.mode) {
             case PreInit:        Serial.println("PreInit"); break;
             case OnPad:          Serial.println("OnPad"); break;
             case PoweredFlight:  Serial.println("PoweredFlight"); break;
@@ -93,29 +112,32 @@ void mode_change_serial() {
   }
 }
 
-bool parachute_deployed = false;
-float previousAltitude;
-int descent_count;
-
-void mode_change_velocity(float altitude, float dt, float ax, float ay, float az) {
-  // Check for Apogee for Parachute Deployment
-  if (!parachute_deployed && flightMode == PoweredFlight) {
-
+void mode_change_velocity() {
+  // Check for Apogee for Parachute Deployment | RECOVERY
+  if (!state.parachute_deployed && state.mode == PoweredFlight) {
     // Check barometer
-    float altitudeVelocity = (altitude - previousAltitude) / dt;
-    if (altitudeVelocity <= DESCENT_THRESHOLD) descent_count++;
-    else descent_count = 0;
-    bool baroCheck = descent_count >= DESCENT_THRESHOLD;
+    float altitudeVelocity = (state.altitude - previous_altitude) / state.dt;
+    if (altitudeVelocity <= DESCENT_THRESHOLD) state.descent_count++;
+    else state.descent_count = 0;
+    bool baroCheck = state.descent_count >= DESCENT_THRESHOLD;
 
     // Check accelerometer
-    float totalAcc = sqrt(ax*ax + ay*ay + az*az); // Net forces
+    // Net force calculation
+    float totalAcc = sqrt(state.ax*state.ax + state.ay*state.ay + state.az*state.az);
     bool accelCheck = totalAcc <= FREEFALL_THRESHOLD;
 
     if (baroCheck && accelCheck) {
       deploy_parachute();
-      parachute_deployed = true;
-      flightMode = Coast;
+      state.parachute_deployed = true;
+      state.mode = Coast;
     }
+  }
+
+  // Check conditions for Abort Command
+  // TODO: Tune these conditions
+  if (!state.abort && (abs(state.yaw) >= ABORT_DEGREES || abs(state.pitch) >= ABORT_DEGREES)) {
+    abort();
+    state.abort = true;
   }
 }
 
@@ -128,20 +150,6 @@ void mode_change_velocity(float altitude, float dt, float ax, float ay, float az
 #define SD_LOG_FILENAME "log"
 #define SD_LOG_EXT      ".pat"
 
-/// @struct LoggedState
-/// size on Uno: 80 bytes
-typedef struct LoggedState {
-  float dt, ax, ay, az,
-        gx, gy, gz,
-        temperature, pressure, altitude,
-        accPitch, accRoll,
-        pitch, roll, yaw,
-        pidOutX, pidOutY,
-        servoAngleX, servoAngleY;
-  int descent_count;
-  bool parachute_deployed;
-  Mode mode;
-} LoggedState;
 
 // Current position in ROM
 unsigned int eeprom_write_addr = 0; // Start logging @0x00
@@ -149,10 +157,10 @@ unsigned long previous_log_time = 0;
 unsigned long logging_period_ms = 1000; // Minimum 5ms for write time
 size_t eeprom_capacity_bytes = 2000;
 
-void eepromWrite(struct LoggedState* data) {
+void eepromWrite() {
   // Serialize data into bytes
-  byte* ptr = (byte*) &data;
-  for (unsigned int i = 0; i < sizeof(LoggedState); i++) {
+  byte* ptr = (byte*) &state;
+  for (unsigned int i = 0; i < sizeof(FlightState); i++) {
     Wire.beginTransmission(EEPROM_ADDR);
     Wire.write((int)(eeprom_write_addr >> 8)); // high byte
     Wire.write((int)(eeprom_write_addr & 0xFF));
@@ -213,7 +221,7 @@ void setup() {
     Serial.begin(38400); // 9600 - 115200
   } while (!Serial);
 
-  flightMode = PreInit;
+  state.mode = PreInit;
 
   int out = -1;
   do {
@@ -277,13 +285,11 @@ void setup() {
 
   Serial.println("Sensors initialized.");
 
-  flightMode = OnPad;
-  lastTime = millis();
+  state.mode = OnPad;
 }
 
-
-// Globals for Loop
-float yaw = 0;
+// Loop globals
+unsigned long last_time = 0;
 
 void loop() {
   // Update Sensor Values
@@ -291,56 +297,56 @@ void loop() {
   mpu.getEvent(&accel, &gyro, &temp);
   
   float currentTime = millis();
-  float dt = (currentTime - lastTime) / 1000.0;
+  state.dt = (currentTime - last_time) / 1000.0;
 
-  float ax = accel.acceleration.x;
-  float ay = accel.acceleration.y;
-  float az = accel.acceleration.z;
+  state.ax = accel.acceleration.x;
+  state.ay = accel.acceleration.y;
+  state.az = accel.acceleration.z;
 
-  float gx = gyro.gyro.x * 180.0 / PI;
-  float gy = gyro.gyro.y * 180.0 / PI;
-  float gz = gyro.gyro.z * 180.0 / PI;
+  state.gx = gyro.gyro.x * 180.0 / PI;
+  state.gy = gyro.gyro.y * 180.0 / PI;
+  state.gz = gyro.gyro.z * 180.0 / PI;
 
-  float temperature = bme.readTemperature();
-  float pressure = bme.readPressure() / 100.0F; // hPa
-  float altitude = bme.readAltitude(1013.25);   // Sea-level pressure (hPa)
+  state.temperature = bme.readTemperature();
+  state.pressure = bme.readPressure() / 100.0F; // hPa
+  state.altitude = bme.readAltitude(1013.25);   // Sea-level pressure (hPa)
 
-  float accPitch = atan2(-ax, az) * 180.0 / PI;
-  float accRoll  = atan2(ay, az) * 180.0 / PI;
+  state.accPitch = atan2(-state.ax, state.az) * 180.0 / PI;
+  state.accRoll  = atan2(state.ay, state.az) * 180.0 / PI;
   
   // Complementary filter contant between the Gyro and Accelerometer
   float alpha = 0.98; // TODO: may need tuning
 
-  float pitch = alpha * (pitch + gy * dt) + (1 - alpha) * accPitch;
-  float roll = alpha * (roll + gx * dt) + (1 - alpha) * accRoll;
-  yaw += gz * dt;
+  state.pitch = alpha * (state.pitch + state.gy * state.dt) + (1 - alpha) * state.accPitch;
+  state.roll = alpha * (state.roll + state.gx * state.dt) + (1 - alpha) * state.accRoll;
+  state.yaw += state.gz * state.dt;
   
   // Servo output
-  float outputX = PID(setpointPitch, pitch, dt, integralPitch, prevErrorPitch);
-  float outputY = PID(setpointRoll , roll, dt, integralRoll, prevErrorRoll);
+  state.pidOutX = PID(setpointPitch, state.pitch, state.dt, integralPitch, prevErrorPitch);
+  state.pidOutY = PID(setpointRoll , state.roll, state.dt, integralRoll, prevErrorRoll);
 
-  int servoAngleX = map(outputX, -90, 90, 0, 180);
-  int servoAngleY = map(outputY, -90, 90, 0, 180);
+  state.servoAngleX = map(state.pidOutX, -90, 90, 0, 180);
+  state.servoAngleY = map(state.pidOutY, -90, 90, 0, 180);
 
-  servoAngleX = constrain(servoAngleX, 0, 180);
-  servoAngleY = constrain(servoAngleY, 0, 180);
+  state.servoAngleX = constrain(state.servoAngleX, 0, 180);
+  state.servoAngleY = constrain(state.servoAngleY, 0, 180);
   
   // mode switch logic
   if (MODE_CHANGE == 0) {
     mode_change_serial();
   } else {
-    mode_change_velocity(altitude, dt, ax, ay, az);
+    mode_change_velocity();
   }
   
   // Perform actions based on mode
-  switch(flightMode) {
+  switch(state.mode) {
     case OnPad: {
       Serial.print("Mode: OnPad");
       break;
     }
     case PoweredFlight: {
-      ServoX.write(servoAngleY);
-      ServoY.write(servoAngleX);
+      ServoX.write(state.pidOutX);
+      ServoY.write(state.pidOutY);
       break;
     }
     case Coast: {
@@ -353,14 +359,9 @@ void loop() {
 
   // Logging
   if (currentTime - previous_log_time >= logging_period_ms) {
-    LoggedState ls = {
-      dt, ax, ay, az, gx, gy, gz, temperature, pressure, altitude,
-      accPitch, accRoll, pitch, roll, yaw, outputX, outputY, servoAngleX, 
-      servoAngleY, descent_count, parachute_deployed, flightMode
-    };
-    eepromWrite(&ls);
+    eepromWrite();
     previous_log_time = currentTime;
   }
 
-  lastTime = millis();
+  last_time = millis();
 }
