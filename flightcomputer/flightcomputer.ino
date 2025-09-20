@@ -3,18 +3,19 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_BME280.h>
 #include <SD.h>
+#include <RF24.h>
+#include <nRF24L01.h>
 
-#define SERVO_X_PIN 10
-#define SERVO_Y_PIN 2
-#define EEPROM_ADDR 0x50
-#define BME_ADDR    0x76
+#define SERVO_X_PIN   10
+#define SERVO_Y_PIN   2
+#define EEPROM_ADDR   0x50
+#define BME_ADDR      0x76
 
 // Sensors
 Adafruit_MPU6050 mpu;
 Adafruit_BME280 bme;
 Servo ServoX;
 Servo ServoY;
-
 
 
 
@@ -146,14 +147,14 @@ void mode_change_velocity() {
 ///
 /// Logging Framework
 ///
-#define SD_LOG_PATH     "/logs"
-#define SD_LOG_FILENAME "log"
-#define SD_LOG_EXT      ".pat"
-
+#define SD_LOG_PATH       "/logs"
+#define SD_LOG_FILENAME   "log"
+#define SD_LOG_EXT        ".pat"
+#define LOGGING_PERIOD_MS 1000
+unsigned long previous_log_time = 0;
 
 // Current position in ROM
 // unsigned int eeprom_write_addr = 0; // Start logging @0x00
-// unsigned long previous_log_time = 0;
 // unsigned long logging_period_ms = 1000; // Minimum 5ms for write time
 // size_t eeprom_capacity_bytes = 2000;
 
@@ -213,7 +214,6 @@ void mode_change_velocity() {
 // }
 //
 
-
 void logToSD() {
   // Check for Logs folder
   if (!SD.exists(SD_LOG_PATH))
@@ -247,6 +247,19 @@ void logToSD() {
   logFile.close();
   logsDir.close();
 }
+
+
+
+///
+/// RADIO 
+///
+#define PIPE      0
+#define TX_ADDR   "PAT01"
+#define RX_ADDR   "PAT02"
+#define RADIO_CE  0
+#define RADIO_CSN 0
+
+RF24 radio(RADIO_CE, RADIO_CSN);
 
 
 void setup() {
@@ -313,12 +326,37 @@ void setup() {
   // Servo Signal Pins
   ServoX.attach(SERVO_X_PIN);
   ServoY.attach(SERVO_Y_PIN);
-
+  
+  // MPU setup
   mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
   Serial.println("Sensors initialized.");
+
+  // Radio setup
+  out = -1;
+  do {
+    out = radio.begin();
+    switch(out) {
+      case RF24_BEGIN_SUCCESS: {
+        break;
+      }
+      case RF24_BEGIN_ERROR_CE_INVALID_PIN: {
+        break;
+      }
+      case RF24_BEGIN_ERROR_CSN_INVALID_PIN: {
+        break;
+      }
+      case RF24_BEGIN_ERROR_INIT_RADIO_BAD_CONFIG: {
+        break;
+      }
+      default: {
+        break;
+      }
+      // Delay is embedded withing radio::_init_radio
+    } 
+  } while(out != RF24_BEGIN_SUCCESS);
 
   state.mode = OnPad;
 }
@@ -393,8 +431,8 @@ void loop() {
   }
 
   // Logging
-  if (currentTime - previous_log_time >= logging_period_ms) {
-    eepromWrite();
+  if (currentTime - previous_log_time >= LOGGING_PERIOD_MS) {
+    logToSD();
     previous_log_time = currentTime;
   }
 
