@@ -3,7 +3,6 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_BME280.h>
 #include <RF24.h>
-#include <nRF24L01.h>
 #include "log.hpp"
 
 #define SERVO_X_PIN   10
@@ -218,7 +217,7 @@ void setup() {
 
   serialPrint("\n>>> Sensors initialized <<<\n");
 
-  Radio setup
+  // Radio setup
   out = -1;
   do {
     out = radio.begin();

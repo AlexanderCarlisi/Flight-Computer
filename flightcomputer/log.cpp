@@ -1,71 +1,8 @@
 #include "log.hpp"
 #include <Arduino.h>
 
-
-// Current position in ROM
-// unsigned int eeprom_write_addr = 0; // Start logging @0x00
-// unsigned long logging_period_ms = 1000; // Minimum 5ms for write time
-// size_t eeprom_capacity_bytes = 2000;
-
-// void eepromWrite() {
-//   // Serialize data into bytes
-//   byte* ptr = (byte*) &state;
-//   for (unsigned int i = 0; i < sizeof(FlightState); i++) {
-//     Wire.beginTransmission(EEPROM_ADDR);
-//     Wire.write((int)(eeprom_write_addr >> 8)); // high byte
-//     Wire.write((int)(eeprom_write_addr & 0xFF));
-//     Wire.write(ptr[i]);
-//     Wire.endTransmission();
-//     eeprom_write_addr++;
-//     // dont need to delay here, logging period should encapsulate this
-//   }
-// }
-
-// TODO:
-// void eepromRead() -> buffer*, size_t length
-// return the whole eeprom buffer or not return but like set ptr to it
-
-// void eepromToSSD() {
-//   // Check for Logs folder
-//   if (!SD.exists(SD_LOG_PATH))
-//     SD.mkdir(SD_LOG_PATH);
-//
-//   File logsDir = SD.open(SD_LOG_PATH);
-//   if (!logsDir.isDirectory()) {
-//     SD.remove(SD_LOG_PATH);
-//     SD.mkdir(SD_LOG_PATH);
-//     logsDir = SD.open(SD_LOG_PATH);
-//   }
-//
-//   // Find log files, and accordingly name new one
-//   int count = 0;
-//   while(true) {
-//     File entry = logsDir.openNextFile();
-//     if (!entry) break;
-//     else count++;
-//   }
-//
-//   File logFile;
-//   while(true) {
-//     logFile = SD.open(
-//       strcat(strcat(strcat(SD_LOG_PATH, SD_LOG_FILENAME), count), SD_LOG_EXT),
-//       FILE_WRITE);
-//     if (logFile) break;
-//     // TODO: Better error logging here :O
-//     else Serial.println("\n>>> Error creating Log File <<<\n");
-//   }
-//
-//   // Write EEPROM to SD Card
-//   // GET EEPROM buffer and length of buffer.
-//   // logFile.write(/**buff, len*/);
-//   logFile.close();
-//   logsDir.close();
-// }
-
-
 unsigned long previous_log_time = 0;
 String log_filename = "";
-
 
 bool logCreateFile() {
   // Find log files, and accordingly name new one

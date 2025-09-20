@@ -48,6 +48,7 @@ void logErrToSD(String err);
 void serialPrint(String message, bool err = false);
 
 float getPrevLogTime();
+
 float updatePrevLogTime();
 
 #endif // LOG_H
