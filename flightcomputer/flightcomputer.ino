@@ -2,9 +2,9 @@
 #include <Servo.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_BME280.h>
-#include <SD.h>
 #include <RF24.h>
 #include <nRF24L01.h>
+#include "log.hpp"
 
 #define SERVO_X_PIN   10
 #define SERVO_Y_PIN   2
@@ -16,8 +16,6 @@ Adafruit_MPU6050 mpu;
 Adafruit_BME280 bme;
 Servo ServoX;
 Servo ServoY;
-
-
 
 ///
 /// PID Funcs and Vars
@@ -42,8 +40,6 @@ float PID(float setangle, float input, float dt, float &integral, float &previou
 
 
 
-
-
 ///
 /// Flight State Machine
 ///
@@ -55,31 +51,8 @@ float PID(float setangle, float input, float dt, float &integral, float &previou
 #define ABORT_DEGREES       45    // TODO: Tune, how many degrees off on Gyro until we Abort.
 #define _G                  9.81  // Earth, Gravity TS
 
-typedef enum Mode {
-  PreInit,        // Initializing Arduino code
-  OnPad,          // OnPad, awaiting Launch
-  PoweredFlight,  // Launched: Servoing
-  Coast           // Deployed Parachute, coasting down.
-} Mode;
-
-/// @struct FlightState
-/// size on Uno: 81 bytes
-typedef struct FlightState {
-  float dt, ax, ay, az,
-        gx, gy, gz,
-        temperature, pressure, altitude,
-        accPitch, accRoll,
-        pitch, roll, yaw,
-        pidOutX, pidOutY,
-        servoAngleX, servoAngleY;
-  int descent_count;
-  bool parachute_deployed;
-  bool abort;
-  Mode mode;
-} FlightState;
+// Global Helpers for state-machine
 FlightState state;
-
-// Helper globals
 float previous_altitude;
 
 void deploy_parachute() {
@@ -181,7 +154,7 @@ void setup() {
       delay(3000);
     }
 
-  } while(out != 1)
+  } while(out != 1);
 
   do {
     out = mpu.begin();
@@ -237,15 +210,15 @@ void setup() {
   // Servo Signal Pins
   ServoX.attach(SERVO_X_PIN);
   ServoY.attach(SERVO_Y_PIN);
-  
+
   // MPU setup
   mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-  
+
   serialPrint("\n>>> Sensors initialized <<<\n");
 
-  // Radio setup
+  Radio setup
   out = -1;
   do {
     out = radio.begin();
@@ -346,9 +319,9 @@ void loop() {
   }
 
   // Logging
-  if (currentTime - previous_log_time >= LOGGING_PERIOD_MS) {
-    logToSD();
-    previous_log_time = currentTime;
+  if (currentTime - getPrevLogTime() >= LOGGING_PERIOD_MS) {
+    logStateToSD(state);
+    updatePrevLogTime();
   }
 
   last_time = millis();
