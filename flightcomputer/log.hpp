@@ -3,7 +3,7 @@
 
 #include <SD.h>
 
-#define PRINT_TO_SERIAL   false
+#define PRINT_TO_SERIAL   true
 #define SD_CS_PIN         0
 #define SD_LOG_PATH       String("/logs")
 #define SD_LOG_FILENAME   String("log")
@@ -49,6 +49,6 @@ void serialPrint(String message, bool err = false);
 
 float getPrevLogTime();
 
-float updatePrevLogTime();
+void updatePrevLogTime();
 
 #endif // LOG_H
