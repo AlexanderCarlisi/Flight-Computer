@@ -6,8 +6,9 @@
 #define MPU6050_ADDR 0x68
 #define MPU6050_REG_PWR_MGMT_1 0x6B
 #define MPU6050_REG_ACCEL_XOUT_H 0x3B
-#define ACCEL_SCALE  (9.81 / 16384.0)   // m/s^2 per LSB
-#define GYRO_SCALE   (1.0 / 131.0)      // °/s per LSB
+#define MPU6050_REG_ACCEL_CONFIG 0x1C
+#define ACCEL_SCALE  1/2048   // m/s^2 per LSB
+#define GYRO_SCALE   1/16.4     // °/s per LSB
 
 /// @struct MPU6050Data
 /// Gyro Values - Degrees

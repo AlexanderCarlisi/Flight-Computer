@@ -1,5 +1,4 @@
 #include "log.hpp"
-#include <Arduino.h>
 
 unsigned long previous_log_time = 0;
 // String log_filename = "";
@@ -77,7 +76,7 @@ void logStateToSD(FlightState& state) {
   // logFile.close();
   serialPrint("\naX: " + String(state.ax));
   serialPrint("\naY: " + String(state.ay));
-  serialPrint("\naX: " + String(state.az));
+  serialPrint("\naZ: " + String(state.az));
 }
 
 float getPrevLogTime() {
