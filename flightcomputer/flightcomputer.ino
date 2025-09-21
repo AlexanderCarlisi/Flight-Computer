@@ -4,6 +4,7 @@
 #include <Adafruit_BME280.h>
 #include <RF24.h>
 #include "log.hpp"
+#include "mpu6050.hpp"
 
 #define SERVO_X_PIN   10
 #define SERVO_Y_PIN   2
@@ -36,7 +37,6 @@ float PID(float setangle, float input, float dt, float &integral, float &previou
   previousError = error;
   return output;
 }
-
 
 
 ///
@@ -139,6 +139,9 @@ void setup() {
   } while (!Serial);
 
   state.mode = PreInit;
+  
+  Wire.begin();
+  mpu6050_init();
 
   int out = -1;
   do {
@@ -154,29 +157,6 @@ void setup() {
     }
 
   } while(out != 1);
-
-  do {
-    out = mpu.begin();
-    switch(out) {
-      case MPU6050_BEGIN_ALL_GOOD: {
-        serialPrint("\n>>> Successfully Initialized MPU6050 <<<\n");
-        break;
-      }
-      case MPU6050_BEGIN_INVALID_CHIP: {
-        serialPrint("\n>>> Error Initializing MPU6050. Detected Chip is not an MPU6050 <<<\n", true);
-        break;
-      }
-      case MPU6050_BEGIN_NOT_FOUND: {
-        serialPrint("\n>>> Error Instantiating MPU6050. No I2C Connection detected on provided port <<<\n", true);
-        break;
-      }
-      default: {
-        serialPrint("\n>>> MPU6050, Impossible output. <<<\n", true);
-        break;
-      }
-    }
-    delay(100);
-  } while (out != MPU6050_BEGIN_ALL_GOOD);
 
   out = -1;
   do {
@@ -253,20 +233,19 @@ void setup() {
 unsigned long last_time = 0;
 
 void loop() {
-  // Update Sensor Values
-  sensors_event_t accel, gyro, temp;
-  mpu.getEvent(&accel, &gyro, &temp);
-  
   float currentTime = millis();
   state.dt = (currentTime - last_time) / 1000.0;
+  
+  // Update Sensor Values
+  MPU6050Data mpu = mpu6050_get();
 
-  state.ax = accel.acceleration.x;
-  state.ay = accel.acceleration.y;
-  state.az = accel.acceleration.z;
+  state.ax = mpu.ax;
+  state.ay = mpu.ay;
+  state.az = mpu.az;
 
-  state.gx = gyro.gyro.x * 180.0 / PI;
-  state.gy = gyro.gyro.y * 180.0 / PI;
-  state.gz = gyro.gyro.z * 180.0 / PI;
+  state.gx = mpu.gx * 180.0 / PI;
+  state.gy = mpu.gy * 180.0 / PI;
+  state.gz = mpu.gz * 180.0 / PI;
 
   state.temperature = bme.readTemperature();
   state.pressure = bme.readPressure() / 100.0F; // hPa
@@ -305,8 +284,8 @@ void loop() {
       break;
     }
     case PoweredFlight: {
-      ServoX.write(state.pidOutX);
-      ServoY.write(state.pidOutY);
+      ServoX.write(state.servoAngleX);
+      ServoY.write(state.servoAngleY);
       break;
     }
     case Coast: {
