@@ -2,9 +2,9 @@
 #include <Servo.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_BME280.h>
-#include <SD.h>
 #include <RF24.h>
-#include <nRF24L01.h>
+#include "log.hpp"
+#include "mpu6050.hpp"
 
 #define SERVO_X_PIN   10
 #define SERVO_Y_PIN   2
@@ -16,8 +16,6 @@ Adafruit_MPU6050 mpu;
 Adafruit_BME280 bme;
 Servo ServoX;
 Servo ServoY;
-
-
 
 ///
 /// PID Funcs and Vars
@@ -52,31 +50,8 @@ float PID(float setangle, float input, float dt, float &integral, float &previou
 #define ABORT_DEGREES       45    // TODO: Tune, how many degrees off on Gyro until we Abort.
 #define _G                  9.81  // Earth, Gravity TS
 
-typedef enum Mode {
-  PreInit,        // Initializing Arduino code
-  OnPad,          // OnPad, awaiting Launch
-  PoweredFlight,  // Launched: Servoing
-  Coast           // Deployed Parachute, coasting down.
-} Mode;
-
-/// @struct FlightState
-/// size on Uno: 81 bytes
-typedef struct FlightState {
-  float dt, ax, ay, az,
-        gx, gy, gz,
-        temperature, pressure, altitude,
-        accPitch, accRoll,
-        pitch, roll, yaw,
-        pidOutX, pidOutY,
-        servoAngleX, servoAngleY;
-  int descent_count;
-  bool parachute_deployed;
-  bool abort;
-  Mode mode;
-} FlightState;
+// Global Helpers for state-machine
 FlightState state;
-
-// Helper globals
 float previous_altitude;
 
 void deploy_parachute() {
@@ -108,6 +83,7 @@ void mode_change_serial() {
         }
       } else {
         Serial.println("Invalid mode. Use: 0=PreInit, 1=OnPad, 2=PoweredFlight, 3=Coast");
+        serialPrint("\n>>> INVALID INPUT FROM STATION <<<\n", true);
       }
     }
   }
@@ -143,113 +119,6 @@ void mode_change_velocity() {
 }
 
 
-
-///
-/// Logging Framework
-///
-#define SD_LOG_PATH       "/logs"
-#define SD_LOG_FILENAME   "log"
-#define SD_LOG_EXT        ".pat"
-#define LOGGING_PERIOD_MS 1000
-unsigned long previous_log_time = 0;
-
-// Current position in ROM
-// unsigned int eeprom_write_addr = 0; // Start logging @0x00
-// unsigned long logging_period_ms = 1000; // Minimum 5ms for write time
-// size_t eeprom_capacity_bytes = 2000;
-
-// void eepromWrite() {
-//   // Serialize data into bytes
-//   byte* ptr = (byte*) &state;
-//   for (unsigned int i = 0; i < sizeof(FlightState); i++) {
-//     Wire.beginTransmission(EEPROM_ADDR);
-//     Wire.write((int)(eeprom_write_addr >> 8)); // high byte
-//     Wire.write((int)(eeprom_write_addr & 0xFF));
-//     Wire.write(ptr[i]);
-//     Wire.endTransmission();
-//     eeprom_write_addr++;
-//     // dont need to delay here, logging period should encapsulate this
-//   }
-// }
-
-// TODO:
-// void eepromRead() -> buffer*, size_t length
-// return the whole eeprom buffer or not return but like set ptr to it
-
-// void eepromToSSD() {
-//   // Check for Logs folder
-//   if (!SD.exists(SD_LOG_PATH))
-//     SD.mkdir(SD_LOG_PATH);
-//
-//   File logsDir = SD.open(SD_LOG_PATH);
-//   if (!logsDir.isDirectory()) {
-//     SD.remove(SD_LOG_PATH);
-//     SD.mkdir(SD_LOG_PATH);
-//     logsDir = SD.open(SD_LOG_PATH);
-//   }
-//
-//   // Find log files, and accordingly name new one
-//   int count = 0;
-//   while(true) {
-//     File entry = logsDir.openNextFile();
-//     if (!entry) break;
-//     else count++;
-//   }
-//
-//   File logFile;
-//   while(true) {
-//     logFile = SD.open(
-//       strcat(strcat(strcat(SD_LOG_PATH, SD_LOG_FILENAME), count), SD_LOG_EXT),
-//       FILE_WRITE);
-//     if (logFile) break;
-//     // TODO: Better error logging here :O
-//     else Serial.println("\n>>> Error creating Log File <<<\n");
-//   }
-//
-//   // Write EEPROM to SD Card
-//   // GET EEPROM buffer and length of buffer.
-//   // logFile.write(/**buff, len*/);
-//   logFile.close();
-//   logsDir.close();
-// }
-//
-
-void logToSD() {
-  // Check for Logs folder
-  if (!SD.exists(SD_LOG_PATH))
-    SD.mkdir(SD_LOG_PATH);
-
-  File logsDir = SD.open(SD_LOG_PATH);
-  if (!logsDir.isDirectory()) {
-    SD.remove(SD_LOG_PATH);
-    SD.mkdir(SD_LOG_PATH);
-    logsDir = SD.open(SD_LOG_PATH);
-  }
-
-  // Find log files, and accordingly name new one
-  int count = 0;
-  while(true) {
-    File entry = logsDir.openNextFile();
-    if (!entry) break;
-    else count++;
-  }
-
-  File logFile;
-  while(true) {
-    logFile = SD.open(
-      strcat(strcat(strcat(SD_LOG_PATH, SD_LOG_FILENAME), count), SD_LOG_EXT),
-      FILE_WRITE);
-    if (logFile) break;
-    else Serial.println("\n>>> Error creating Log File <<<\n");
-  }
-
-  logFile.write((uint8_t*)&state, sizeof(state));
-  logFile.close();
-  logsDir.close();
-}
-
-
-
 ///
 /// RADIO 
 ///
@@ -270,53 +139,47 @@ void setup() {
   } while (!Serial);
 
   state.mode = PreInit;
+  
+  Wire.begin();
+  mpu6050_init();
 
   int out = -1;
   do {
-    out = mpu.begin();
-    switch(out) {
-      case MPU6050_BEGIN_ALL_GOOD: {
-        Serial.print("\n>>> Successfully Initialized MPU6050 <<<\n");
-        break;
+    out = int(SD.begin(SD_CS_PIN));
+    if (out == 1) {
+      serialPrint("\n>>> Successfully Initialized SD Card <<<\n");
+      if (!logInit()) {
+        continue;
       }
-      case MPU6050_BEGIN_INVALID_CHIP: {
-        Serial.print("\n>>> Error Initializing MPU6050. Detected Chip is not an MPU6050 <<<\n");
-        break;
-      }
-      case MPU6050_BEGIN_NOT_FOUND: {
-        Serial.print("\n>>> Error Instantiating MPU6050. No I2C Connection detected on provided port <<<\n");
-        break;
-      }
-      default: {
-        Serial.print("\n>>> MPU6050, Impossible output. <<<\n");
-        break;
-      }
+    } else {
+      serialPrint("\n>>> Failed to Initalize SD Card <<<\n", true);
+      delay(3000);
     }
-    delay(100);
-  } while (out != MPU6050_BEGIN_ALL_GOOD);
+
+  } while(out != 1);
 
   out = -1;
   do {
     out = bme.begin(BME_ADDR);
     switch(out) {
       case BME280_BEGIN_ALL_GOOD: {
-        Serial.print("\n>>> Successfully Initialized BME280 <<<\n");
+        serialPrint("\n>>> Successfully Initialized BME280 <<<\n");
         break;
       }
       case BME280_INIT_INCORRECT_CHIP_ID: {
-        Serial.print("\n>>> Error Initializing BME280. Detected Chip is not a BME280 <<<\n");
+        serialPrint("\n>>> Error Initializing BME280. Detected Chip is not a BME280 <<<\n", true);
         break;
       }
       case BME280_BEGIN_I2C_NOT_DETECTED: {
-        Serial.print("\n>>> Error Instantiating BME280. No I2C Connection detected on provided port <<<\n");
+        serialPrint("\n>>> Error Instantiating BME280. No I2C Connection detected on provided port <<<\n", true);
         break;
       }
       case BME280_BEGIN_SPI: {
-        Serial.print("\n>>> BME280 Running on SPI and not I2C <<<\n");
+        serialPrint("\n>>> BME280 Running on SPI and not I2C <<<\n", true);
         break;
       }
       default: {
-        Serial.print("\n>>> BME280, Impossible output. <<<\n");
+        serialPrint("\n>>> BME280, Impossible output. <<<\n", true);
         break;
       }
     }
@@ -326,13 +189,13 @@ void setup() {
   // Servo Signal Pins
   ServoX.attach(SERVO_X_PIN);
   ServoY.attach(SERVO_Y_PIN);
-  
+
   // MPU setup
   mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
-  Serial.println("Sensors initialized.");
+  serialPrint("\n>>> Sensors initialized <<<\n");
 
   // Radio setup
   out = -1;
@@ -340,18 +203,23 @@ void setup() {
     out = radio.begin();
     switch(out) {
       case RF24_BEGIN_SUCCESS: {
+        serialPrint("\n>>> RF24 Successfully Initialized <<<\n");
         break;
       }
       case RF24_BEGIN_ERROR_CE_INVALID_PIN: {
+        serialPrint("\n>>> RF24 INVALID CE PIN <<<\n", true);
         break;
       }
       case RF24_BEGIN_ERROR_CSN_INVALID_PIN: {
+        serialPrint("\n>>> RF24 INVALID CSN PID <<<\n", true);
         break;
       }
       case RF24_BEGIN_ERROR_INIT_RADIO_BAD_CONFIG: {
+        serialPrint("\n>>> RF24 BAD CONFIG <<<\n", true);
         break;
       }
       default: {
+        serialPrint("\n>>> RF24 Impossible output <<<\n", true);
         break;
       }
       // Delay is embedded withing radio::_init_radio
@@ -365,20 +233,19 @@ void setup() {
 unsigned long last_time = 0;
 
 void loop() {
-  // Update Sensor Values
-  sensors_event_t accel, gyro, temp;
-  mpu.getEvent(&accel, &gyro, &temp);
-  
   float currentTime = millis();
   state.dt = (currentTime - last_time) / 1000.0;
+  
+  // Update Sensor Values
+  MPU6050Data mpu = mpu6050_get();
 
-  state.ax = accel.acceleration.x;
-  state.ay = accel.acceleration.y;
-  state.az = accel.acceleration.z;
+  state.ax = mpu.ax;
+  state.ay = mpu.ay;
+  state.az = mpu.az;
 
-  state.gx = gyro.gyro.x * 180.0 / PI;
-  state.gy = gyro.gyro.y * 180.0 / PI;
-  state.gz = gyro.gyro.z * 180.0 / PI;
+  state.gx = mpu.gx * 180.0 / PI;
+  state.gy = mpu.gy * 180.0 / PI;
+  state.gz = mpu.gz * 180.0 / PI;
 
   state.temperature = bme.readTemperature();
   state.pressure = bme.readPressure() / 100.0F; // hPa
@@ -414,12 +281,11 @@ void loop() {
   // Perform actions based on mode
   switch(state.mode) {
     case OnPad: {
-      Serial.print("Mode: OnPad");
       break;
     }
     case PoweredFlight: {
-      ServoX.write(state.pidOutX);
-      ServoY.write(state.pidOutY);
+      ServoX.write(state.servoAngleX);
+      ServoY.write(state.servoAngleY);
       break;
     }
     case Coast: {
@@ -431,9 +297,9 @@ void loop() {
   }
 
   // Logging
-  if (currentTime - previous_log_time >= LOGGING_PERIOD_MS) {
-    logToSD();
-    previous_log_time = currentTime;
+  if (currentTime - getPrevLogTime() >= LOGGING_PERIOD_MS) {
+    logStateToSD(state);
+    updatePrevLogTime();
   }
 
   last_time = millis();
