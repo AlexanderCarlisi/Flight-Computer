@@ -1,6 +1,5 @@
 #include <Wire.h>
 #include <Servo.h>
-#include <Adafruit_MPU6050.h>
 #include <Adafruit_BME280.h>
 #include <RF24.h>
 #include "log.hpp"
@@ -12,7 +11,6 @@
 #define BME_ADDR      0x76
 
 // Sensors
-Adafruit_MPU6050 mpu;
 Adafruit_BME280 bme;
 Servo ServoX;
 Servo ServoY;
@@ -128,7 +126,7 @@ void mode_change_velocity() {
 #define RADIO_CE  0
 #define RADIO_CSN 0
 
-RF24 radio(RADIO_CE, RADIO_CSN);
+// RF24 radio(RADIO_CE, RADIO_CSN);
 
 
 void setup() {
@@ -143,22 +141,22 @@ void setup() {
   Wire.begin();
   mpu6050_init();
 
+  // int out = -1;
+  // do {
+  //   out = int(SD.begin(SD_CS_PIN));
+  //   if (out == 1) {
+  //     serialPrint("\n>>> Successfully Initialized SD Card <<<\n");
+  //     if (!logInit()) {
+  //       continue;
+  //     }
+  //   } else {
+  //     serialPrint("\n>>> Failed to Initalize SD Card <<<\n", true);
+  //     delay(3000);
+  //   }
+
+  // } while(out != 1);
+
   int out = -1;
-  do {
-    out = int(SD.begin(SD_CS_PIN));
-    if (out == 1) {
-      serialPrint("\n>>> Successfully Initialized SD Card <<<\n");
-      if (!logInit()) {
-        continue;
-      }
-    } else {
-      serialPrint("\n>>> Failed to Initalize SD Card <<<\n", true);
-      delay(3000);
-    }
-
-  } while(out != 1);
-
-  out = -1;
   do {
     out = bme.begin(BME_ADDR);
     switch(out) {
@@ -190,41 +188,41 @@ void setup() {
   ServoX.attach(SERVO_X_PIN);
   ServoY.attach(SERVO_Y_PIN);
 
-  // MPU setup
-  mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
-  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  // // MPU setup
+  // mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+  // mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  // mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
   serialPrint("\n>>> Sensors initialized <<<\n");
 
-  // Radio setup
-  out = -1;
-  do {
-    out = radio.begin();
-    switch(out) {
-      case RF24_BEGIN_SUCCESS: {
-        serialPrint("\n>>> RF24 Successfully Initialized <<<\n");
-        break;
-      }
-      case RF24_BEGIN_ERROR_CE_INVALID_PIN: {
-        serialPrint("\n>>> RF24 INVALID CE PIN <<<\n", true);
-        break;
-      }
-      case RF24_BEGIN_ERROR_CSN_INVALID_PIN: {
-        serialPrint("\n>>> RF24 INVALID CSN PID <<<\n", true);
-        break;
-      }
-      case RF24_BEGIN_ERROR_INIT_RADIO_BAD_CONFIG: {
-        serialPrint("\n>>> RF24 BAD CONFIG <<<\n", true);
-        break;
-      }
-      default: {
-        serialPrint("\n>>> RF24 Impossible output <<<\n", true);
-        break;
-      }
-      // Delay is embedded withing radio::_init_radio
-    } 
-  } while(out != RF24_BEGIN_SUCCESS);
+  // // Radio setup
+  // out = -1;
+  // do {
+  //   out = radio.begin();
+  //   switch(out) {
+  //     case RF24_BEGIN_SUCCESS: {
+  //       serialPrint("\n>>> RF24 Successfully Initialized <<<\n");
+  //       break;
+  //     }
+  //     case RF24_BEGIN_ERROR_CE_INVALID_PIN: {
+  //       serialPrint("\n>>> RF24 INVALID CE PIN <<<\n", true);
+  //       break;
+  //     }
+  //     case RF24_BEGIN_ERROR_CSN_INVALID_PIN: {
+  //       serialPrint("\n>>> RF24 INVALID CSN PID <<<\n", true);
+  //       break;
+  //     }
+  //     case RF24_BEGIN_ERROR_INIT_RADIO_BAD_CONFIG: {
+  //       serialPrint("\n>>> RF24 BAD CONFIG <<<\n", true);
+  //       break;
+  //     }
+  //     default: {
+  //       serialPrint("\n>>> RF24 Impossible output <<<\n", true);
+  //       break;
+  //     }
+  //     // Delay is embedded withing radio::_init_radio
+  //   } 
+  // } while(out != RF24_BEGIN_SUCCESS);
 
   state.mode = OnPad;
 }
