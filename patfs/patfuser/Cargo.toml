@@ -1,0 +1,9 @@
+[package]
+name = "patfuser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fuser = "0.14"
+libc = "0.2"
+time = "0.3"
