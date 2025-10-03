@@ -50,25 +50,22 @@ struct FlightState {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-struct Metadata<'a> {
-    begin_sequence: &'a str,
+struct Metadata {
     epoch: i64, // File name = 'Log'+mh/dy/yr+':'+hr:mn:sc+'.pat'
-    state_sequence: &'a str,
-    state_size: u16
 }
 
 
-const SECTOR_SIZE: usize = 512;
-
+// const SECTOR_SIZE: usize = 512;
 /// Manually declare the size on the arduino, will be padded on different architectures
 /// Deriving the struct as repr C only constructs it like it would in C, doesnt change the
 /// padding, since that literally wouldnt make sense if you think about it.
 ///                      #f32, f32B
-const U8_FS_SIZE: u16 = (19 * 4) + (2 * 1) + (1 * 3);
-const FS_SIZE: usize = U8_FS_SIZE as usize;
+// const U8_FS_SIZE: u16 = (19 * 4) + (2 * 1) + (1 * 3);
+// const FS_SIZE: usize = U8_FS_SIZE as usize;
+// const U8_MD_SIZE: u16 = 64 + 16;
 
 
-fn test_write(sd_mock: &mut File, logs: usize, states_per_log: usize) -> io::Result<()> {
+fn test_write(sd_mock: &mut File, logs: u16, states_per_log: usize) -> io::Result<()> {
     let mut buffer: Vec<u8> = Vec::new();
     for _ in 0..logs {
         // Each Log has metadata pertaining to it.
@@ -76,19 +73,14 @@ fn test_write(sd_mock: &mut File, logs: usize, states_per_log: usize) -> io::Res
         // it's probably going to be easier to maintain in case things get changed
         // around.
         let metadata: Metadata = Metadata {
-            begin_sequence: LOG_BEGIN_SEQUENCE,
             epoch: 0,
-            state_sequence: LOG_STATE_SEQUENCE,
-            state_size: U8_FS_SIZE
         };
-        
-        for byte in metadata.begin_sequence.as_bytes() {
+
+        for byte in LOG_BEGIN_SEQUENCE.as_bytes() {
             buffer.push(*byte);
         }
+        
         for byte in metadata.epoch.to_be_bytes() {
-            buffer.push(byte);
-        }
-        for byte in metadata.state_size.to_be_bytes() {
             buffer.push(byte);
         }
 
@@ -118,7 +110,6 @@ fn test_write(sd_mock: &mut File, logs: usize, states_per_log: usize) -> io::Res
                 parachute_deployed: true,
                 abort: true,
                 mode: 0x01
-
             };
             
             // What da heeel oh my gawd no wae ae ae aeeaaaa
