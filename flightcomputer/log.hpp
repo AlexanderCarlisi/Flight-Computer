@@ -1,15 +1,9 @@
 #ifndef LOG_H
 #define LOG_H
 
-#include <SD.h>
+#include <Arduino.h>
 
-#define PRINT_TO_SERIAL   false
-#define SD_CS_PIN         0
-#define SD_LOG_PATH       String("/logs")
-#define SD_LOG_FILENAME   String("log")
-#define SD_LOG_EXT        String(".pat")
-#define LOG_START_BYTE    '$'     // Signifies the call of Setup on Arduino.
-#define LOG_SETUP_SUCCESS '%'     // Setup Passed.
+#define PRINT_TO_SERIAL   true
 #define LOGGING_PERIOD_MS 1000
 
 typedef enum Mode {
@@ -49,6 +43,6 @@ void serialPrint(String message, bool err = false);
 
 float getPrevLogTime();
 
-float updatePrevLogTime();
+void updatePrevLogTime();
 
 #endif // LOG_H
