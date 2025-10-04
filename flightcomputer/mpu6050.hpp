@@ -1,3 +1,7 @@
+/// TODO: Cleanup definitions, stick to Hex
+/// ~maybe add temperature here
+/// cleanup function names, get? get what?
+
 #ifndef MPU6050_H
 #define MPU6050_H
 

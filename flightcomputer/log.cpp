@@ -1,3 +1,7 @@
+/// TODO:
+/// Implement Logging to sectors, instead of FAT SD.h
+/// Get Metadata Epoch time from Radio
+
 #include "log.hpp"
 
 unsigned long previous_log_time = 0;
