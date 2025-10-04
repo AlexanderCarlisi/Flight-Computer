@@ -1,3 +1,7 @@
+/// TODO:
+/// Sector Logging
+/// Cleanup, make this simpler
+
 #ifndef LOG_H
 #define LOG_H
 

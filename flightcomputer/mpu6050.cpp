@@ -1,3 +1,6 @@
+/// TODO:
+/// Simplify Bitwise operations, went crazy debugging, now clean the mess up.
+
 #include "mpu6050.hpp"
 #include <Wire.h>
 #include <Arduino.h>

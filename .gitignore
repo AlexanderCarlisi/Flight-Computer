@@ -1,0 +1,4 @@
+# Rust build artifacts
+/patfs/logtest/target
+/patfs/patfuser/target
+**/*.rs.bk
