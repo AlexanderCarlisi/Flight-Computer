@@ -92,7 +92,7 @@ void loop() {
   state.dt = (currentTime - last_time) / 1000.0;
   
   // Update Sensor Values
-  MPU6050Data mpu = mpu6050_get();
+  MPU6050Data mpu = mpu6050_read();
 
   state.ax = mpu.ax;
   state.ay = mpu.ay;
