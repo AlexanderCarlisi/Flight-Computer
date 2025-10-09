@@ -1,5 +1,7 @@
 TODO List:
-- [x] Write to Sectors on SD Card to resolve 2kb SRAM issue, we don't have enough SRAM for a 512B buffer.
+- [ ] Write to Sectors on SD Card to resolve 2kb SRAM issue, we don't have enough SRAM for a 512B buffer.
+- [ ] Implement Self Tests for the MPU6050.
+- [ ] Implement Err Sequence for the Logs.
 - [ ] Debug Linux FUSE Filesystem Driver for reading SD Card sectors properly.
 - [ ] Status LED indication for current State.
 - [ ] RF24 Wireless Radio communication, for logging epoch, and sending current state to machine.

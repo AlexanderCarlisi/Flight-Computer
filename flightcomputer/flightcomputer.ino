@@ -77,10 +77,11 @@ void setup() {
   mpu6050_init();
   bme_init();
   radio_init();
+  log_init(LogMetadata {0});
   ServoX.attach(SERVO_X_PIN);
   ServoY.attach(SERVO_Y_PIN);
 
-  serialPrint("\n>>> Sensors initialized <<<\n");
+  log_print("\n>>> Sensors initialized <<<\n");
   state.mode = OnPad;
 }
 
@@ -152,9 +153,9 @@ void loop() {
   }
 
   // Logging
-  if (currentTime - getPrevLogTime() >= LOGGING_PERIOD_MS) {
-    logStateToSD(state);
-    updatePrevLogTime();
+  if (currentTime - log_time() >= LOGGING_PERIOD_MS) {
+    log_state(state);
+    log_time_update();
   }
 
   last_time = millis();
@@ -166,23 +167,23 @@ void bme_init() {
     out = bme.begin(BME_ADDR);
     switch(out) {
       case BME280_BEGIN_ALL_GOOD: {
-        serialPrint("\n>>> Successfully Initialized BME280 <<<\n");
+        log_print("\n>>> Successfully Initialized BME280 <<<\n");
         break;
       }
       case BME280_INIT_INCORRECT_CHIP_ID: {
-        serialPrint("\n>>> Error Initializing BME280. Detected Chip is not a BME280 <<<\n", true);
+        log_print("\n>>> Error Initializing BME280. Detected Chip is not a BME280 <<<\n", true);
         break;
       }
       case BME280_BEGIN_I2C_NOT_DETECTED: {
-        serialPrint("\n>>> Error Instantiating BME280. No I2C Connection detected on provided port <<<\n", true);
+        log_print("\n>>> Error Instantiating BME280. No I2C Connection detected on provided port <<<\n", true);
         break;
       }
       case BME280_BEGIN_SPI: {
-        serialPrint("\n>>> BME280 Running on SPI and not I2C <<<\n", true);
+        log_print("\n>>> BME280 Running on SPI and not I2C <<<\n", true);
         break;
       }
       default: {
-        serialPrint("\n>>> BME280, Impossible output. <<<\n", true);
+        log_print("\n>>> BME280, Impossible output. <<<\n", true);
         break;
       }
     }
@@ -197,23 +198,23 @@ void radio_init() {
   //   out = radio.begin();
   //   switch(out) {
   //     case RF24_BEGIN_SUCCESS: {
-  //       serialPrint("\n>>> RF24 Successfully Initialized <<<\n");
+  //       log_print("\n>>> RF24 Successfully Initialized <<<\n");
   //       break;
   //     }
   //     case RF24_BEGIN_ERROR_CE_INVALID_PIN: {
-  //       serialPrint("\n>>> RF24 INVALID CE PIN <<<\n", true);
+  //       log_print("\n>>> RF24 INVALID CE PIN <<<\n", true);
   //       break;
   //     }
   //     case RF24_BEGIN_ERROR_CSN_INVALID_PIN: {
-  //       serialPrint("\n>>> RF24 INVALID CSN PID <<<\n", true);
+  //       log_print("\n>>> RF24 INVALID CSN PID <<<\n", true);
   //       break;
   //     }
   //     case RF24_BEGIN_ERROR_INIT_RADIO_BAD_CONFIG: {
-  //       serialPrint("\n>>> RF24 BAD CONFIG <<<\n", true);
+  //       log_print("\n>>> RF24 BAD CONFIG <<<\n", true);
   //       break;
   //     }
   //     default: {
-  //       serialPrint("\n>>> RF24 Impossible output <<<\n", true);
+  //       log_print("\n>>> RF24 Impossible output <<<\n", true);
   //       break;
   //     }
   //     // Delay is embedded withing radio::_init_radio
@@ -259,7 +260,7 @@ void mode_change_serial() {
         }
       } else {
         Serial.println("Invalid mode. Use: 0=PreInit, 1=OnPad, 2=PoweredFlight, 3=Coast");
-        serialPrint("\n>>> INVALID INPUT FROM STATION <<<\n", true);
+        log_print("\n>>> INVALID INPUT FROM STATION <<<\n", true);
       }
     }
   }
