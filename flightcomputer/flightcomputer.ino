@@ -1,150 +1,201 @@
-#include <Wire.h>
 #include <Servo.h>
+#include <RF24.h>
+#include <RF24_config.h>
+#include <nRF24L01.h>
+#include <printf.h>
 #include <Adafruit_BME280.h>
 #include <Adafruit_MPU6050.h>
-#include <RF24.h>
 
-///
-/// Servos and Sensors
-///
+/// DEFINITIONS
+#define MODE_CHANGE         1   // 0 = Velocity (automatic), 1 = Serial Input
+#define HALT_ON_INIT_ERR    0   // Whether to halt execution when an error occurs in Initialization or not
 
-#define SERVO_X_PIN   10
-#define SERVO_Y_PIN   2
-#define EEPROM_ADDR   0x50
-#define BME_ADDR      0x76
+#define LOG_TO_SERIAL       1   // Whether log functions should additionally print to Serial or not
+#define LOG_TO_SD           1   // Whether log functions should write to the SD Card or not, should be disabled when debugging in Loops
+#define SERIAL_STATE        1   // Whether to Print the FlightState to Serial or not
+#define LOG_PERIOD_MS       1000
 
-Adafruit_MPU6050 mpu;
-Adafruit_BME280 bme;
-Servo servoX;
-Servo servoY;
-
-void mpu_init();
-void bme_init();
-void radio_init();
-void servos_init();
-
-
-///
-/// PID
-///
-const float setpointPitch = -90, setpointRoll = 0;
-const float Kp = 2., Ki = 0.05, Kd = 0.1;
-float integralPitch = 0, integralRoll = 0;
-float prevErrorPitch = 0, prevErrorRoll = 0;
-
-float PID(float setangle, float input, float dt, float &integral, float &previousError);
-
-
-///
-/// Flight State Machine
-///
-
-#define MODE_CHANGE         1     // 0 = Velocity based, 1 = Serial based
-#define FREEFALL_THRESHOLD  2.0   // m/s/s, checks accelerometer  TODO: tune
-#define DESCENT_THRESHOLD   0.5   // Altitude velocity threshold to be considered at Apogee.
-#define APOGEE_COUNT        5     // Consecutive ticks at DESCENT_THREASHOLD, till considered at Apogee
-#define ABORT_DEGREES       45    // TODO: Tune, how many degrees off on Gyro until we Abort.
-#define _G                  9.81  // Earth, Gravity TS
-
-FlightState state;
-float previous_altitude;
-
-void deploy_parachute();
-void abort();
-void mode_change_serial();
-void move_change_velocity();
-
-
-///
-/// RADIO 
-///
-#define PIPE      0
-#define TX_ADDR   "PAT01"
-#define RX_ADDR   "PAT02"
+#define RADIO_IS_CLOSE      1   // If the RF24 Radios are close together, supply less power for interference reasons
+#define RF_PIPE   0
+#define RF_CHNL   110
+#define RF_TX     {'P', 'A', 'T', '0', '1', '\0'}
+#define RF_RX     {'P', 'A', 'T', '0', '2', '\0'}
 #define RADIO_CE  0
 #define RADIO_CSN 0
 
-// RF24 radio(RADIO_CE, RADIO_CSN);
-void radio_init();
+// #define MPU_ADDR    0x68   // Has default value in Lib, if that doesnt work, set manually here
+#define MPU_ACCEL_RANGE   MPU6050_RANGE_16_G
+#define MPU_GYRO_RANGE    MPU6050_RANGE_500_DEG
+#define MPU_FILTER_BAND   MPU6050_BAND_21_HZ
+#define BME_ADDR    0x76
+#define SERVO_X_PIN 10
+#define SERVO_Y_PIN 2
 
+#define DESIRED_PITCH   -90   // Defines what is Straight up for the Servos
+#define DESIRED_ROLL    0     // ^
+#define PIDCONST_P      2
+#define PIDCONST_I      0.05
+#define PIDCONST_D      0.1
+
+#define FREEFALL_THRESHOLD  2.0   // m/s/s checks accelerometer
+#define DESCENT_THRESHOLD   0.5   // Altitude velocity threshold to be considered at Apogee
+#define APOGEE_COUNT        5     // Consecutive ticks at APOGEE until we trust it
+#define ABORT_DEGREES       90    // Call Abort Function at this value on Gyro for X||Y||Z
+#define GRAVITY_FIELD       9.81  // Earth
+
+typedef enum Mode {
+  PreInit,        // Initializing Code
+  OnPad,          // OnPad, Awaiting Launch
+  PoweredFlight,  // Launched: Servoing
+  Coast           // Deployed Parachute / Aborted
+} Mode;
+
+typedef struct FlightState {
+  unsigned long dt;
+  float ax, ay, az,
+        gx, gy, gz,
+        temperature, pressure, altitude,
+        accPitch, accRoll,
+        pitch, roll, yaw,
+        pidOutX, pidOutY,
+        pidIPitch, pidIRoll,
+        pidPrevErrPitch, pidPrevErrRoll,
+        pidErrPitch, pidErrRoll,
+        servoAngleX, servoAngleY;
+  int descent_count;
+  bool parachute_deployed;
+  bool abort;
+  Mode mode;
+} FlightState;
+
+void halt();
+void mpu_init(Adafruit_MPU6050& mpu);
+void bme_init(Adafruit_BME280& bme);
+void radio_init(RF24& radio);
+void log_init();
+
+void log(String message);
+void log_err(String message);
+void log_state(FlightState& state);
+
+void radio_establish_connection(RF24& radio);
+
+void deploy_parachute();
+void abort();
+void mode_change_serial(Mode& mode);
+void mode_change_velocity(Mode& mode);
+
+/** 
+ * @brief Perform the PID Calculation on the provided values.
+ * @note integral, preverr, err are Pointers, they will be populated with new values.
+ */
+float pid(float setpoint, float measurement, float dt, float& integral, float& prevErr, float& err);
+
+/// Globals
+const byte RADIO_TX_BYTES[] = RF_TX;
+const byte RADIO_RX_BYTES[] = RF_RX;
+
+unsigned long prev_timestamp = 0;
+unsigned long prev_log_timestamp = 0;
+float previous_altitude = 0;
+bool logger_initialized = false;
+bool mpu_initialized = false;
+bool bme_initialized = false;
+bool radio_initialized = false;
+
+FlightState flight_state;
+Adafruit_MPU6050 mpu6050;
+Adafruit_BME280 bme280;
+RF24 rf24_radio(RADIO_CE, RADIO_CSN);
+Servo servo_x;
+Servo servo_y;
 
 void setup() {
-  // If servos are still slow, try raising the Bitrate.
   do {
-    Serial.begin(38400); // 9600 - 115200
+    Serial.begin(115200); // 9600 - 115200
   } while (!Serial);
+  Serial.println("\n>>> Serial Connected <<<\n");
+  Serial.println(">>> Setup Begun <<<");
 
-  state.mode = PreInit;
-  
-  Wire.begin();
-  mpu6050_init();
-  bme_init();
-  radio_init();
-  log_init(LogMetadata {0});
-  ServoX.attach(SERVO_X_PIN);
-  ServoY.attach(SERVO_Y_PIN);
+  log_init();
+  log("Logger ✔");
 
-  log_print("\n>>> Sensors initialized <<<\n");
-  state.mode = OnPad;
+  mpu_init(mpu6050);
+  log("MPU6050 ✔");
+
+  bme_init(bme280);
+  log("BME280 ✔");
+
+  servo_x.attach(SERVO_X_PIN);
+  servo_y.attach(SERVO_Y_PIN);
+  log("Servos ✔");
+
+  log("Radio Setup");
+  radio_init(rf24_radio);
+  log("Radio Initialized");
+  radio_establish_connection(rf24_radio);
+  log("Radio ✔");
+
+  log("Setup Complete");
 }
 
-// Loop globals
-unsigned long last_time = 0;
-
 void loop() {
-  float currentTime = millis();
-  state.dt = (currentTime - last_time) / 1000.0;
+  unsigned long currentTime = millis();
+  flight_state.dt = (currentTime - prev_timestamp) / 1000.0;
+  prev_timestamp = currentTime;
   
-  // Update Sensor Values
-  MPU6050Data mpu = mpu6050_read();
+  sensors_event_t a, g, temp;
+  mpu6050.getEvent(&a, &g, &temp);
 
-  state.ax = mpu.ax;
-  state.ay = mpu.ay;
-  state.az = mpu.az;
+  // m/s/s
+  flight_state.ax = a.acceleration.x;
+  flight_state.ay = a.acceleration.y;
+  flight_state.az = a.acceleration.z;
 
-  state.gx = mpu.gx * 180.0 / PI;
-  state.gy = mpu.gy * 180.0 / PI;
-  state.gz = mpu.gz * 180.0 / PI;
+  // radians to degrees
+  flight_state.gx = g.gyro.x * 180.0 / PI;
+  flight_state.gy = g.gyro.y * 180.0 / PI;
+  flight_state.gz = g.gyro.z * 180.0 / PI;
 
-  state.temperature = bme.readTemperature();
-  state.pressure = bme.readPressure() / 100.0F; // hPa
-  state.altitude = bme.readAltitude(1013.25);   // Sea-level pressure (hPa)
+  flight_state.temperature = bme280.readTemperature();
+  flight_state.pressure = bme280.readPressure() / 100.0F; // hPa
+  flight_state.altitude = bme280.readAltitude(1013.25);   // Sea-level pressure (hPa)
 
-  state.accPitch = atan2(-state.ax, state.az) * 180.0 / PI;
-  state.accRoll  = atan2(state.ay, state.az) * 180.0 / PI;
+  flight_state.accPitch = atan2(-flight_state.ax, flight_state.az) * 180.0 / PI;
+  flight_state.accRoll  = atan2(flight_state.ay, flight_state.az) * 180.0 / PI;
   
-  // Complementary filter contant between the Gyro and Accelerometer
+  // Complementary filter constant between the Gyro and Accelerometer
   float alpha = 0.98; // TODO: may need tuning
 
-  state.pitch = alpha * (state.pitch + state.gy * state.dt) + (1 - alpha) * state.accPitch;
-  state.roll = alpha * (state.roll + state.gx * state.dt) + (1 - alpha) * state.accRoll;
-  state.yaw += state.gz * state.dt;
-  
+  flight_state.pitch = alpha * (flight_state.pitch + flight_state.gy * flight_state.dt) + (1 - alpha) * flight_state.accPitch;
+  flight_state.roll = alpha * (flight_state.roll + flight_state.gx * flight_state.dt) + (1 - alpha) * flight_state.accRoll;
+  flight_state.yaw += flight_state.gz * flight_state.dt;
+
   // Servo output
-  state.pidOutX = PID(setpointPitch, state.pitch, state.dt, integralPitch, prevErrorPitch);
-  state.pidOutY = PID(setpointRoll , state.roll, state.dt, integralRoll, prevErrorRoll);
+  flight_state.pidOutX = pid(DESIRED_PITCH, flight_state.pitch, flight_state.dt, flight_state.pidIPitch, flight_state.pidPrevErrPitch, flight_state.pidErrPitch);
+  flight_state.pidOutY = pid(DESIRED_ROLL , flight_state.roll, flight_state.dt, flight_state.pidIRoll, flight_state.pidPrevErrRoll, flight_state.pidErrRoll);
 
-  state.servoAngleX = map(state.pidOutX, -90, 90, 0, 180);
-  state.servoAngleY = map(state.pidOutY, -90, 90, 0, 180);
+  flight_state.servoAngleX = map(flight_state.pidOutX, -90, 90, 0, 180);
+  flight_state.servoAngleY = map(flight_state.pidOutY, -90, 90, 0, 180);
 
-  state.servoAngleX = constrain(state.servoAngleX, 0, 180);
-  state.servoAngleY = constrain(state.servoAngleY, 0, 180);
+  flight_state.servoAngleX = constrain(flight_state.servoAngleX, 0, 180);
+  flight_state.servoAngleY = constrain(flight_state.servoAngleY, 0, 180);
   
   // mode switch logic
   if (MODE_CHANGE == 0) {
-    mode_change_serial();
+    mode_change_serial(flight_state.mode);
   } else {
-    mode_change_velocity();
+    mode_change_velocity(flight_state);
   }
   
   // Perform actions based on mode
-  switch(state.mode) {
+  switch(flight_state.mode) {
     case OnPad: {
       break;
     }
     case PoweredFlight: {
-      ServoX.write(state.servoAngleX);
-      ServoY.write(state.servoAngleY);
+      servo_x.write(flight_state.servoAngleX);
+      servo_y.write(flight_state.servoAngleY);
       break;
     }
     case Coast: {
@@ -156,120 +207,135 @@ void loop() {
   }
 
   // Logging
-  if (currentTime - log_time() >= LOGGING_PERIOD_MS) {
-    log_state(state);
-    log_time_update();
+  if (currentTime - prev_log_timestamp >= LOG_PERIOD_MS) {
+    log_state(flight_state);
+    prev_log_timestamp = currentTime;
   }
-
-  last_time = millis();
 }
 
-void bme_init() {
-  int out = -1;
-  do {
-    out = bme.begin(BME_ADDR);
-    switch(out) {
-      case BME280_BEGIN_ALL_GOOD: {
-        log_print("\n>>> Successfully Initialized BME280 <<<\n");
-        break;
-      }
-      case BME280_INIT_INCORRECT_CHIP_ID: {
-        log_print("\n>>> Error Initializing BME280. Detected Chip is not a BME280 <<<\n", true);
-        break;
-      }
-      case BME280_BEGIN_I2C_NOT_DETECTED: {
-        log_print("\n>>> Error Instantiating BME280. No I2C Connection detected on provided port <<<\n", true);
-        break;
-      }
-      case BME280_BEGIN_SPI: {
-        log_print("\n>>> BME280 Running on SPI and not I2C <<<\n", true);
-        break;
-      }
-      default: {
-        log_print("\n>>> BME280, Impossible output. <<<\n", true);
-        break;
-      }
-    }
-    delay(100);
-  } while (out != BME280_BEGIN_ALL_GOOD);
+void halt() {
+  while (1) {
+    delay(10);
+  }
 }
 
-void radio_init() {
-  // // Radio setup
-  // out = -1;
-  // do {
-  //   out = radio.begin();
-  //   switch(out) {
-  //     case RF24_BEGIN_SUCCESS: {
-  //       log_print("\n>>> RF24 Successfully Initialized <<<\n");
-  //       break;
-  //     }
-  //     case RF24_BEGIN_ERROR_CE_INVALID_PIN: {
-  //       log_print("\n>>> RF24 INVALID CE PIN <<<\n", true);
-  //       break;
-  //     }
-  //     case RF24_BEGIN_ERROR_CSN_INVALID_PIN: {
-  //       log_print("\n>>> RF24 INVALID CSN PID <<<\n", true);
-  //       break;
-  //     }
-  //     case RF24_BEGIN_ERROR_INIT_RADIO_BAD_CONFIG: {
-  //       log_print("\n>>> RF24 BAD CONFIG <<<\n", true);
-  //       break;
-  //     }
-  //     default: {
-  //       log_print("\n>>> RF24 Impossible output <<<\n", true);
-  //       break;
-  //     }
-  //     // Delay is embedded withing radio::_init_radio
-  //   } 
-  // } while(out != RF24_BEGIN_SUCCESS);
+void log_init() { // TODO: 
+  if (HALT_ON_INIT_ERR) {
+    do {
+
+    } while (1);
+    logger_initialized = true;
+  }
 }
 
-float PID(float setangle, float input, float dt, float &integral, float &previousError){
-  float error = setangle - input;
-  integral += error * dt;
-  float derivative = (error - previousError) / dt;
-  float output = Kp * error + Ki * integral + Kd * derivative;
-  previousError = error;
-  return output;
+void mpu_init(Adafruit_MPU6050& mpu) {
+  mpu_initialized = mpu.begin();
+  if (!mpu_initialized) {
+    log_err("MPU Initialization Failed");
+    if (HALT_ON_INIT_ERR) halt();
+  } else {
+    mpu.setAccelerometerRange(MPU_ACCEL_RANGE);
+    mpu.setGyroRange(MPU_GYRO_RANGE);
+    mpu.setFilterBandwidth(MPU_FILTER_BAND);
+  }
 }
 
-void deploy_parachute() {
-  // TODO:
+void bme_init(Adafruit_BME280& bme) {
+  bme_initialized = bme.begin();
+  if (!bme_initialized) {
+    log_err("BME Initialization Failed");
+    if (HALT_ON_INIT_ERR) halt();
+  }
 }
 
+void radio_init(RF24& radio) {
+  radio_initialized = radio.begin();
+  if (!radio_initialized) {
+    log_err("Radio Initialization Failed");
+    if (HALT_ON_INIT_ERR) halt();
+
+  } else {
+    if (RADIO_IS_CLOSE)
+      radio.setPALevel(RF24_PA_LOW); // MAX is default
+    radio.setChannel(RF_CHNL);
+    radio.stopListening(RADIO_TX_BYTES); // set writes on Pipe 0, also puts in writting mode
+    radio.openReadingPipe(1, RADIO_RX_BYTES); // reads on Pipe 1
+    // radio.startListening() puts it in listening mode / RX Mode
+  }
+}
+
+void log(String message) {
+  if (LOG_TO_SERIAL) {
+    Serial.println(message);
+  }
+  if (LOG_TO_SD) {
+
+  }
+}
+
+void log_err(String message) {
+  message = "\n<ERR> " + message + " <ERR>\n";
+  log(message);
+}
+
+void log_state(FlightState& state) {
+  if (SERIAL_STATE) {
+    Serial.print("DeltaTime: "); Serial.print(state.dt);
+    Serial.print("accelX: "); Serial.print(state.ax);
+    Serial.print("accelY: "); Serial.print(state.ay);
+    // todo: implement the rest
+  }
+  if (LOG_TO_SD) {
+    // Log bytes of state
+  }
+}
+
+void radio_establish_connection(RF24& radio) {
+  byte payload[] = "Hello World!";
+  radio.stopListening(RADIO_TX_BYTES);
+  bool report = radio.write(&payload, sizeof(payload));
+
+  if (report) {
+    log("Transmission Successful");
+
+  } else {
+    log_err("Transmission failed or timed out");
+    if (HALT_ON_INIT_ERR) halt();
+  }
+}
+
+void deploy_parachute() { }
 void abort() {
-  // TODO:
   deploy_parachute();
 }
 
-void mode_change_serial() {
+void mode_change_serial(Mode& mode) {
   if (Serial.available() > 0) {
     String input = Serial.readStringUntil('\n'); // Read full line until Enter
     input.trim(); // Remove spaces/newlines
 
     if (input.length() > 0 && input.charAt(0) >= '0' && input.charAt(0) <= '3') {
       int modeNumber = input.toInt();
-      if (modeNumber >= 0 && modeNumber <= 3) {
-        if (modeNumber != state.mode) {  // Only update if mode is actually different
-          state.mode = (Mode)modeNumber;
-          Serial.print("Flight mode set to: ");
-          switch (state.mode) {
-            case PreInit:        Serial.println("PreInit"); break;
-            case OnPad:          Serial.println("OnPad"); break;
-            case PoweredFlight:  Serial.println("PoweredFlight"); break;
-            case Coast:          Serial.println("Coast"); break;
-          }
+      if (modeNumber >= 0 && modeNumber <= 3 && ((Mode) modeNumber) != mode) {
+        mode = (Mode) modeNumber;
+        Serial.print("Flight mode set to: ");
+        switch (mode) {
+          case PreInit:        Serial.println("PreInit"); break;
+          case OnPad:          Serial.println("OnPad"); break;
+          case PoweredFlight:  Serial.println("PoweredFlight"); break;
+          case Coast:          Serial.println("Coast"); break;
         }
+        mode = modeNumber;
+        log("Mode Change");
       } else {
         Serial.println("Invalid mode. Use: 0=PreInit, 1=OnPad, 2=PoweredFlight, 3=Coast");
-        log_print("\n>>> INVALID INPUT FROM STATION <<<\n", true);
+        log_err("Invalid Mode Input from Serial");
       }
     }
   }
 }
 
-void mode_change_velocity() {
+void mode_change_velocity(FlightState& state) {
   // Check for Apogee for Parachute Deployment | RECOVERY
   if (!state.parachute_deployed && state.mode == PoweredFlight) {
     // Check barometer
@@ -288,6 +354,8 @@ void mode_change_velocity() {
       state.parachute_deployed = true;
       state.mode = Coast;
     }
+
+    previous_altitude = state.altitude;
   }
 
   // Check conditions for Abort Command
@@ -296,4 +364,11 @@ void mode_change_velocity() {
     abort();
     state.abort = true;
   }
+}
+
+float pid(float setpoint, float measurement, float dt, float& integral, float& prevErr, float& err) {
+  prevErr = err;
+  err = setpoint - measurement;
+  integral += err;
+  return PIDCONST_P * err + PIDCONST_I * integral + PIDCONST_D * (err - prevErr) / dt;
 }
