@@ -325,7 +325,6 @@ void mode_change_serial(Mode& mode) {
           case PoweredFlight:  Serial.println("PoweredFlight"); break;
           case Coast:          Serial.println("Coast"); break;
         }
-        mode = modeNumber;
         log("Mode Change");
       } else {
         Serial.println("Invalid mode. Use: 0=PreInit, 1=OnPad, 2=PoweredFlight, 3=Coast");
@@ -370,5 +369,7 @@ float pid(float setpoint, float measurement, float dt, float& integral, float& p
   prevErr = err;
   err = setpoint - measurement;
   integral += err;
+  if (dt == 0) 
+    dt = 0.000001;
   return PIDCONST_P * err + PIDCONST_I * integral + PIDCONST_D * (err - prevErr) / dt;
 }
