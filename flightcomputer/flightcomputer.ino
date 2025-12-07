@@ -1,9 +1,8 @@
 #include <Wire.h>
 #include <Servo.h>
 #include <Adafruit_BME280.h>
+#include <Adafruit_MPU6050.h>
 #include <RF24.h>
-#include "log.hpp"
-#include "mpu6050.hpp"
 
 ///
 /// Servos and Sensors
@@ -14,11 +13,15 @@
 #define EEPROM_ADDR   0x50
 #define BME_ADDR      0x76
 
+Adafruit_MPU6050 mpu;
 Adafruit_BME280 bme;
-Servo ServoX;
-Servo ServoY;
+Servo servoX;
+Servo servoY;
 
+void mpu_init();
 void bme_init();
+void radio_init();
+void servos_init();
 
 
 ///

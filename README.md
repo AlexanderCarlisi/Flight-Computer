@@ -9,5 +9,9 @@ TODO List:
 - [ ] BME280
 - [ ] Servos
 
+- [ ] Log Viewer
+- [ ] Display 'Shuffleboard' 'Elastic'
+- [ ] 'Driver Station'
+
 This project is an accumulation of code for a on-board Flight Computer for a homemade Rocket.
 
