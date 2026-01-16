@@ -1,4 +1,14 @@
-#include <Servo.h>
+/// TODO List
+/// - Logging
+/// - Radio Communication
+/// - Test Swapping to ESP32
+///   - Servos
+///   - Gyro
+///   - PID Loop
+///   - Serial Mode Change
+///   - Logging Framework
+
+#include <ESP32Servo.h>
 #include <RF24.h>
 #include <RF24_config.h>
 #include <nRF24L01.h>
@@ -20,22 +30,28 @@
 #define RF_CHNL   110
 #define RF_TX     {'P', 'A', 'T', '0', '1', '\0'}
 #define RF_RX     {'P', 'A', 'T', '0', '2', '\0'}
-#define RADIO_CE  0
-#define RADIO_CSN 0
+
+// Radio VSPI Bus
+#define RADIO_CE  4
+#define RADIO_CSN 5
+#define RADIO_SPI_SCK   18
+#define RADIO_SPI_MISO  19
+#define RADIO_SPI_MOSI  23
 
 // #define MPU_ADDR    0x68   // Has default value in Lib, if that doesnt work, set manually here
 #define MPU_ACCEL_RANGE   MPU6050_RANGE_16_G
 #define MPU_GYRO_RANGE    MPU6050_RANGE_500_DEG
 #define MPU_FILTER_BAND   MPU6050_BAND_21_HZ
 #define BME_ADDR    0x76
-#define SERVO_X_PIN 10
-#define SERVO_Y_PIN 2
+#define SERVO_X_PIN 0
+#define SERVO_Y_PIN 0
 
 #define DESIRED_PITCH   -90   // Defines what is Straight up for the Servos
 #define DESIRED_ROLL    0     // ^
 #define PIDCONST_P      2
 #define PIDCONST_I      0.05
 #define PIDCONST_D      0.1
+#define PID_PERIOD      20    // Miliseconds between PID Updates
 
 #define FREEFALL_THRESHOLD  2.0   // m/s/s checks accelerometer
 #define DESCENT_THRESHOLD   0.5   // Altitude velocity threshold to be considered at Apogee
@@ -51,8 +67,7 @@ typedef enum Mode {
 } Mode;
 
 typedef struct FlightState {
-  unsigned long dt;
-  float ax, ay, az,
+  float dt, ax, ay, az,
         gx, gy, gz,
         temperature, pressure, altitude,
         accPitch, accRoll,
@@ -97,6 +112,7 @@ const byte RADIO_RX_BYTES[] = RF_RX;
 
 unsigned long prev_timestamp = 0;
 unsigned long prev_log_timestamp = 0;
+unsigned long prev_pid_timestamp = 0;
 float previous_altitude = 0;
 bool logger_initialized = false;
 bool mpu_initialized = false;
@@ -111,11 +127,10 @@ Servo servo_x;
 Servo servo_y;
 
 void setup() {
-  do {
-    Serial.begin(115200); // 9600 - 115200
-  } while (!Serial);
-  Serial.println("\n>>> Serial Connected <<<\n");
-  Serial.println(">>> Setup Begun <<<");
+  Serial.begin(115200);
+  log("Serial Connected");
+  log("Begin Setup");
+  flight_state.mode = PreInit;
 
   log_init();
   log("Logger ✔");
@@ -126,17 +141,20 @@ void setup() {
   bme_init(bme280);
   log("BME280 ✔");
 
-  servo_x.attach(SERVO_X_PIN);
-  servo_y.attach(SERVO_Y_PIN);
+  servo_x.attach(SERVO_X_PIN, 500, 2400);
+  servo_y.attach(SERVO_Y_PIN, 500, 2400);
   log("Servos ✔");
 
+  log("Begin SPI");
+  SPI.begin(RADIO_SPI_SCK, RADIO_SPI_MISO, RADIO_SPI_MOSI, RADIO_CSN);
   log("Radio Setup");
   radio_init(rf24_radio);
   log("Radio Initialized");
   radio_establish_connection(rf24_radio);
   log("Radio ✔");
 
-  log("Setup Complete");
+  log("Setup Complete, FlightState => OnPad");
+  flight_state.mode = OnPad;
 }
 
 void loop() {
@@ -172,14 +190,18 @@ void loop() {
   flight_state.yaw += flight_state.gz * flight_state.dt;
 
   // Servo output
-  flight_state.pidOutX = pid(DESIRED_PITCH, flight_state.pitch, flight_state.dt, flight_state.pidIPitch, flight_state.pidPrevErrPitch, flight_state.pidErrPitch);
-  flight_state.pidOutY = pid(DESIRED_ROLL , flight_state.roll, flight_state.dt, flight_state.pidIRoll, flight_state.pidPrevErrRoll, flight_state.pidErrRoll);
+  if (currentTime - prev_pid_timestamp >= PID_PERIOD) {
+    flight_state.pidOutX = pid(DESIRED_PITCH, flight_state.pitch, flight_state.dt, flight_state.pidIPitch, flight_state.pidPrevErrPitch, flight_state.pidErrPitch);
+    flight_state.pidOutY = pid(DESIRED_ROLL , flight_state.roll, flight_state.dt, flight_state.pidIRoll, flight_state.pidPrevErrRoll, flight_state.pidErrRoll);
 
-  flight_state.servoAngleX = map(flight_state.pidOutX, -90, 90, 0, 180);
-  flight_state.servoAngleY = map(flight_state.pidOutY, -90, 90, 0, 180);
+    flight_state.servoAngleX = map(flight_state.pidOutX, -90, 90, 0, 180);
+    flight_state.servoAngleY = map(flight_state.pidOutY, -90, 90, 0, 180);
 
-  flight_state.servoAngleX = constrain(flight_state.servoAngleX, 0, 180);
-  flight_state.servoAngleY = constrain(flight_state.servoAngleY, 0, 180);
+    flight_state.servoAngleX = constrain(flight_state.servoAngleX, 0, 180);
+    flight_state.servoAngleY = constrain(flight_state.servoAngleY, 0, 180);
+
+    prev_pid_timestamp = currentTime;
+  }
   
   // mode switch logic
   if (MODE_CHANGE == 0) {
@@ -220,12 +242,12 @@ void halt() {
 }
 
 void log_init() { // TODO: 
-  if (HALT_ON_INIT_ERR) {
-    do {
+  // if (HALT_ON_INIT_ERR) {
+  //   do {
 
-    } while (1);
-    logger_initialized = true;
-  }
+  //   } while (1);
+  //   logger_initialized = true;
+  // }
 }
 
 void mpu_init(Adafruit_MPU6050& mpu) {
@@ -369,7 +391,5 @@ float pid(float setpoint, float measurement, float dt, float& integral, float& p
   prevErr = err;
   err = setpoint - measurement;
   integral += err;
-  if (dt == 0) 
-    dt = 0.000001;
   return PIDCONST_P * err + PIDCONST_I * integral + PIDCONST_D * (err - prevErr) / dt;
 }
